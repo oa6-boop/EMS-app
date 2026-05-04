@@ -1,0 +1,22 @@
+# EMS Project
+
+## Requirements
+- Docker Desktop (Windows or Linux)
+- Git
+
+## Setup
+git clone https://github.com/Wissy2/EMS_Dataplatform.git
+cd ems-project
+docker compose up --build
+
+## What runs
+| Service     | URL / Port               |
+|-------------|--------------------------|
+| Modbus sim  | localhost:502            |
+| Node-RED    | http://localhost:1880    |
+| EMQX broker | http://localhost:18083   |
+| MQTT        | localhost:1883           |
+
+## Verify data is flowing
+# Subscribe to all topics and watch live messages
+docker exec ems-dataplatform-mqtt-broker-1 mosquitto_sub -h localhost -t "#" -v

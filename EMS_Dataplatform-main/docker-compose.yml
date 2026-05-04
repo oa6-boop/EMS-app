@@ -1,0 +1,160 @@
+services:
+
+  mqtt-broker:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-broker
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+    networks:
+      - iot-net
+    restart: unless-stopped
+
+  modbus-sim:
+    build: ./simulator
+    container_name: modbus-sim
+    command: python server.py
+    ports:
+      - "1502:1502"
+    networks:
+      - iot-net
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092,INTERNAL://kafka:29092"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      CLUSTER_ID: "0XqLIVmMSfOdA3_zVu5Z9Q"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - iot-net
+    restart: unless-stopped
+
+  bridge:
+    build: ./bridge
+    container_name: bridge
+    depends_on:
+      - mqtt-broker
+      - kafka
+    environment:
+      MQTT_BROKER: "mqtt://mqtt-broker:1883"
+      KAFKA_BROKER: "kafka:29092"
+    networks:
+      - iot-net
+    restart: unless-stopped
+
+  nodered:
+    image: nodered/node-red
+    container_name: nodered
+    ports:
+      - "1880:1880"
+    volumes:
+      - ./node-red-data:/data
+    networks:
+      - iot-net
+    depends_on:
+      - modbus-sim
+      - mqtt-broker
+    restart: unless-stopped
+
+  modbus-publisher:
+    build: ./modbus-publisher
+    container_name: modbus-publisher
+    depends_on:
+      - modbus-sim
+      - mqtt-broker
+    environment:
+      MODBUS_HOST: modbus-sim
+      MODBUS_PORT: "1502"
+      MQTT_URL: "mqtt://mqtt-broker:1883"
+      INTERVAL_MS: "5000"
+      PLANT_NAME: "Plant 1"
+    networks:
+      - iot-net
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: ems-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB:       ems_db
+      POSTGRES_USER:     ems_user
+      POSTGRES_PASSWORD: ems_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - iot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ems_user -d ems_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    admin@jesagroup.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    networks:
+      - iot-net
+    restart: unless-stopped
+
+  ems-backend:
+    build: ../ems-backend
+    container_name: ems-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../ems-backend/.env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt-broker:
+        condition: service_started
+    networks:
+      - iot-net
+    restart: unless-stopped
+
+  ems-app:
+    build: ../EMS-app
+    container_name: ems-app
+    ports:
+      - "5173:5173"
+    depends_on:
+      - ems-backend
+    networks:
+      - iot-net
+    restart: unless-stopped
+
+networks:
+  iot-net:
+    driver: bridge
+
+volumes:
+  kafka_data:
+  postgres_data:

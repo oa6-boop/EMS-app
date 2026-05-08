@@ -20,7 +20,6 @@ import Messages from "./pages/Messages";
 import HistoricalData from "./pages/HistoricalData";
 import AlarmThresholds from "./pages/AlarmThresholds";
 import MaintenancePage from "./pages/MaintenancePage";
-import EnergyObjectives from "./pages/EnergyObjectives";
 import ChatbotWidget from "./components/ChatbotWidget";
 import { useWebSocket } from "./hooks/useWebSocket";
 import EnergyPriceAnalysis from "./pages/EnergyPriceAnalysis";
@@ -31,17 +30,42 @@ import {
   fetchCarbonHistory,
 } from "./api/emsApi";
 import {
-  createUser, deleteUser, fetchUrgentMessages,
-  fetchUrgentMessagesCount, fetchUsers, regenerateUserPassword,
+  createUser, deleteUser, updateUserRole,
+  fetchUrgentMessages, fetchUrgentMessagesCount,
+  fetchUsers, regenerateUserPassword,
 } from "./api/usersApi";
 import { loginUser, getCurrentUser, sendForgotPasswordRequest } from "./api/authApi";
 import { fetchLatestMessageNotifications } from "./api/chatApi";
 
+// ─── Pages accessibles par rôle ───────────────────────────────────────────────
+const PAGES_BY_ROLE = {
+  admin: [
+    "dashboard","industry","realtime","equipment","power","carbon",
+    "forecasting","reports","alarms","history","maintenance","prices",
+    "weather","messages","profile","users","thresholds","urgent","audit",
+  ],
+  management: [
+    "dashboard","industry","carbon","forecasting","reports",
+    "prices","weather","messages","profile",
+  ],
+  maintenance: [
+    "realtime","equipment","power","alarms","history",
+    "thresholds","maintenance","weather","messages","profile",
+  ],
+};
+
+// Page par défaut selon le rôle
+const DEFAULT_PAGE = {
+  admin:       "dashboard",
+  management:  "dashboard",
+  maintenance: "realtime",
+};
+
 const VALID_PAGES = [
-  "dashboard", "industry", "realtime", "equipment", "power",
-  "carbon", "forecasting", "reports", "alarms", "weather",
-  "profile", "users", "urgent", "audit", "messages",
-  "history", "thresholds", "maintenance", "objectives", "prices",
+  "dashboard","industry","realtime","equipment","power",
+  "carbon","forecasting","reports","alarms","weather",
+  "profile","users","urgent","audit","messages",
+  "history","thresholds","maintenance","prices",
 ];
 
 const DEFAULT_LINE = { id: "line-1", label: "Production Line 1" };
@@ -104,15 +128,12 @@ function convertEnergies(lineData = []) {
 
 function buildElectricalData(energies) {
   const elec = energies.filter(
-    e =>
-      e.name.toLowerCase().includes("electric") ||
-      e.name.toLowerCase().includes("électric")
+    e => e.name.toLowerCase().includes("electric") ||
+         e.name.toLowerCase().includes("électric")
   );
   if (!elec.length) return { tension: 415, frequence: 50, facteurPuissance: 0.94, thd: 3.2 };
-
   const avg = (arr, def) =>
     arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : def;
-
   return {
     tension:          parseFloat(avg(elec.map(e => e.rawData?.voltage).filter(v => v != null),      415).toFixed(1)),
     frequence:        parseFloat(avg(elec.map(e => e.rawData?.frequency).filter(v => v != null),    50.0).toFixed(2)),
@@ -229,12 +250,12 @@ function App() {
     return () => clearInterval(iv);
   }, [currentLine.label]);
 
-  // Utilisateurs
+  // Utilisateurs (admin seulement)
   useEffect(() => {
     const load = async () => {
       try {
         const token = localStorage.getItem("token");
-        if (!token) return;
+        if (!token || user?.role !== "admin") return;
         const r = await fetchUsers(token);
         setUsers(r.map(i => ({
           id:           i.id,
@@ -248,7 +269,7 @@ function App() {
       } catch {}
     };
     load();
-  }, [isLoggedIn]);
+  }, [isLoggedIn, user?.role]);
 
   // Messages urgents — admin seulement
   useEffect(() => {
@@ -297,71 +318,49 @@ function App() {
     restore();
   }, []);
 
-  // ── NOTIFICATIONS MESSAGES — POUR TOUS LES UTILISATEURS ──────────────────
+  // Notifications messages — tous les utilisateurs
   useEffect(() => {
-    if (!isLoggedIn) return;
-
-    // Stopper seulement si pas encore de user chargé
-    if (!user) {
-      initializedRef.current = true;
-      return;
-    }
+    if (!isLoggedIn || !user) return;
 
     const poll = async () => {
       try {
         const token = localStorage.getItem("token");
         if (!token) return;
-
         const results = await fetchLatestMessageNotifications(token);
         let unseen = 0;
         let toast  = "";
-
         results.forEach(item => {
           const lm    = item.lastMessage;
           if (!lm) return;
           const mid   = String(lm.id);
           const isOwn = lm.sender_id === user?.id;
-
-          // Premier chargement — mémoriser sans notifier
           if (!initializedRef.current) {
             lastSeenRef.current.add(mid);
             return;
           }
-
-          // Nouveau message, pas envoyé par soi-même
           if (!lastSeenRef.current.has(mid) && !isOwn) {
             unseen++;
             lastSeenRef.current.add(mid);
-            const title = item.conversation?.type === "group"
-              ? (item.conversation.name || "Group")
-              : "New message";
-            toast = `${title}: ${lm.sender_name}`;
+            toast = `New message: ${lm.sender_name}`;
           }
         });
-
         if (unseen > 0) {
           setMessageNotifCount(p => p + unseen);
           setToastMessage(toast || "New message received");
         }
-
         if (!initializedRef.current) initializedRef.current = true;
-
       } catch {}
     };
 
-    // Réinitialiser et lancer
     initializedRef.current = false;
     poll();
     const iv = setInterval(poll, 4000);
     return () => clearInterval(iv);
-
   }, [isLoggedIn, user?.id]);
 
-  // Effacer badge quand on ouvre Messages — POUR TOUS
+  // Effacer badge messages quand on ouvre la page
   useEffect(() => {
-    if (activePage === "messages") {
-      setMessageNotifCount(0);
-    }
+    if (activePage === "messages") setMessageNotifCount(0);
   }, [activePage]);
 
   // Toast auto-dismiss
@@ -392,24 +391,26 @@ function App() {
     setSelectedEnergyNames(p => p.filter(n => availableNames.includes(n)));
   }, [availableNames]);
 
-  // Actions
+  // ── Actions ────────────────────────────────────────────────────────────────
   const handleLogin = async (email, password) => {
     try {
       const tr    = await loginUser(email, password);
       const token = tr.access_token;
       localStorage.setItem("token", token);
       const cu = await getCurrentUser(token);
+      const role = cu.role || "management";
       setUser({
         id:           cu.id,
         firstName:    cu.firstName,
         lastName:     cu.lastName,
         email:        cu.email,
-        role:         cu.role,
+        role,
         profileImage: cu.profileImage || "",
       });
       setIsLoggedIn(true);
       setToastMessage("Login successful");
-      setActivePage(getSavedPage());
+      // Rediriger vers la page par défaut du rôle
+      setActivePage(DEFAULT_PAGE[role] || "dashboard");
       return true;
     } catch (e) {
       localStorage.removeItem("token");
@@ -459,7 +460,7 @@ function App() {
         role:         c.role,
         profileImage: c.profile_image || "",
       }, ...p]);
-      setToastMessage("User created");
+      setToastMessage(`User created — Role: ${c.role}`);
     } catch (e) {
       setToastMessage(e.message || "Failed to create user");
     }
@@ -474,6 +475,17 @@ function App() {
       setToastMessage("User deleted");
     } catch (e) {
       setToastMessage(e.message || "Failed");
+    }
+  };
+
+  // Changer le rôle d'un utilisateur
+  const handleUpdateRole = async (userId, newRole) => {
+    try {
+      await updateUserRole(userId, newRole, localStorage.getItem("token"));
+      setUsers(p => p.map(u => u.id === userId ? { ...u, role: newRole } : u));
+      setToastMessage(`Role updated to ${newRole}`);
+    } catch (e) {
+      setToastMessage(e.message || "Failed to update role");
     }
   };
 
@@ -507,11 +519,23 @@ function App() {
     avgPowerFactor:      lineAvgPF,
   };
 
-  // ── Rendu des pages ───────────────────────────────────────────────────────
+  // ── Rendu des pages avec contrôle d'accès ─────────────────────────────────
   const renderPage = () => {
-    // Pages réservées aux admins
-    const adminOnly = ["users", "urgent", "audit", "thresholds"];
-    if (adminOnly.includes(activePage) && user?.role !== "admin") {
+    const role         = user?.role || "management";
+    const allowedPages = PAGES_BY_ROLE[role] || PAGES_BY_ROLE.management;
+    const defaultPage  = DEFAULT_PAGE[role]  || "dashboard";
+
+    // Page non autorisée → page par défaut du rôle
+    if (!allowedPages.includes(activePage)) {
+      if (defaultPage === "realtime") {
+        return (
+          <RealTimeMonitoring
+            data={visibleData}
+            powerQualityHistory={powerQualityHistory}
+            {...shared}
+          />
+        );
+      }
       return (
         <Dashboard
           energies={visibleEnergies} selectedLineLabel={currentLine.label}
@@ -606,21 +630,19 @@ function App() {
         return <Profile user={user} onUpdateProfile={handleUpdateProfile} />;
 
       case "maintenance":
-        return <MaintenancePage energies={visibleEnergies} 
-              currentUser={user}
-/>;
-
-      case "objectives":
         return (
-          <EnergyObjectives
+          <MaintenancePage
             energies={visibleEnergies}
-            totalCost={lineTotalCost}
-            totalCo2={lineTotalCo2}
-            peakKw={linePeakKw}
-            avgPowerFactor={lineAvgPF}
-            selectedLineLabel={currentLine.label}
-                  currentUser={user}
+            currentUser={user}
+          />
+        );
 
+      case "prices":
+        return (
+          <EnergyPriceAnalysis
+            energies={visibleEnergies}
+            selectedLineLabel={currentLine.label}
+            peakKw={linePeakKw}
           />
         );
 
@@ -630,6 +652,7 @@ function App() {
             users={users}
             onCreateUser={handleCreateUser}
             onDeleteUser={handleDeleteUser}
+            onUpdateRole={handleUpdateRole}
           />
         );
 
@@ -643,14 +666,7 @@ function App() {
             onRegeneratePassword={handleRegeneratePassword}
           />
         );
-case "prices":
-  return (
-    <EnergyPriceAnalysis
-      energies={visibleEnergies}
-      selectedLineLabel={currentLine.label}
-      peakKw={linePeakKw}
-    />
-  );
+
       case "audit":
         return <AuditLogs />;
 
@@ -717,13 +733,9 @@ case "prices":
           )}
           {(wsConnected || Object.keys(backendSummary).length > 0) && (
             <span style={{
-              fontSize:      "0.72rem",
-              padding:       "4px 12px",
-              borderRadius:  "10px",
-              background:    "#dcfce7",
-              color:         "#16a34a",
-              fontWeight:    700,
-              border:        "1px solid #bbf7d0",
+              fontSize: "0.72rem", padding: "4px 12px", borderRadius: "10px",
+              background: "#dcfce7", color: "#16a34a", fontWeight: 700,
+              border: "1px solid #bbf7d0",
             }}>
               ● Live
             </span>

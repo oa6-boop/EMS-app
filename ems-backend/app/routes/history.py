@@ -1,13 +1,11 @@
-
-
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
 from app.db import get_db
 from app.models import TelemetryRecord
-from app.utils import calculate_cost, calculate_co2, CO2_FACTOR_KG_PER_KWH
+from app.utils import calculate_cost, calculate_co2
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
@@ -19,16 +17,7 @@ def get_aggregated_history(
     energy_name: str = Query(default="Electricity"),
     db: Session = Depends(get_db),
 ):
-    """
-    Retourne les données historiques agrégées pour une ligne.
-    - hour  : dernière heure
-    - day   : dernier jour
-    - week  : dernière semaine
-    - month : dernier mois
-    - year  : dernière année
-    """
-    now = datetime.utcnow()
-
+    now    = datetime.utcnow()
     ranges = {
         "hour":  now - timedelta(hours=1),
         "day":   now - timedelta(days=1),
@@ -38,17 +27,31 @@ def get_aggregated_history(
     }
     start = ranges[period]
 
+    # Filtre souple : ILIKE pour correspondre aux variantes de noms
+    # ex: "Electricity" correspond à "Electricity (kW)" et "Electricity-kWh"
     records = (
         db.query(TelemetryRecord)
         .filter(
             TelemetryRecord.production_line == line_name,
-            TelemetryRecord.energy_name     == energy_name,
-            TelemetryRecord.timestamp       >= start,
-            TelemetryRecord.source          != "simulator",
+            TelemetryRecord.energy_name.ilike(f"%{energy_name.split('-')[0]}%"),
+            TelemetryRecord.timestamp >= start,
         )
         .order_by(TelemetryRecord.timestamp)
         .all()
     )
+
+    # Si pas de résultats, essayer avec toutes les énergies de cette ligne
+    if not records:
+        records = (
+            db.query(TelemetryRecord)
+            .filter(
+                TelemetryRecord.production_line == line_name,
+                TelemetryRecord.timestamp >= start,
+            )
+            .order_by(TelemetryRecord.timestamp)
+            .limit(500)
+            .all()
+        )
 
     if not records:
         return {
@@ -70,12 +73,14 @@ def get_aggregated_history(
         "energy_name": energy_name,
         "data": [
             {
-                "timestamp": t,
-                "value":     v,
-                "cost":      c,
-                "co2_kg":    co2,
+                "timestamp":   t,
+                "value":       v,
+                "cost":        c,
+                "co2_kg":      co2,
+                "energy_name": records[i].energy_name,
+                "unit":        records[i].unit,
             }
-            for t, v, c, co2 in zip(timestamps, values, costs, co2_values)
+            for i, (t, v, c, co2) in enumerate(zip(timestamps, values, costs, co2_values))
         ],
         "stats": {
             "min":        round(min(values), 2),
@@ -96,11 +101,7 @@ def get_comparison(
     energy_name: str = Query(default="Electricity"),
     db: Session = Depends(get_db),
 ):
-    """
-    Comparaison aujourd'hui vs hier.
-    Retourne les deux séries pour affichage côte à côte.
-    """
-    now       = datetime.utcnow()
+    now             = datetime.utcnow()
     today_start     = now - timedelta(hours=24)
     yesterday_start = now - timedelta(hours=48)
     yesterday_end   = now - timedelta(hours=24)
@@ -110,10 +111,9 @@ def get_comparison(
             db.query(TelemetryRecord)
             .filter(
                 TelemetryRecord.production_line == line_name,
-                TelemetryRecord.energy_name     == energy_name,
-                TelemetryRecord.timestamp       >= start,
-                TelemetryRecord.timestamp       < end,
-                TelemetryRecord.source          != "simulator",
+                TelemetryRecord.energy_name.ilike(f"%{energy_name.split('-')[0]}%"),
+                TelemetryRecord.timestamp >= start,
+                TelemetryRecord.timestamp <  end,
             )
             .order_by(TelemetryRecord.timestamp)
             .all()
@@ -137,7 +137,6 @@ def get_comparison(
     today_data     = summarize(today_records)
     yesterday_data = summarize(yesterday_records)
 
-    # Calcul variation
     variation = 0.0
     if yesterday_data["avg"] > 0:
         variation = round(
@@ -145,10 +144,10 @@ def get_comparison(
         )
 
     return {
-        "line_name":   line_name,
-        "energy_name": energy_name,
-        "today":       today_data,
-        "yesterday":   yesterday_data,
+        "line_name":     line_name,
+        "energy_name":   energy_name,
+        "today":         today_data,
+        "yesterday":     yesterday_data,
         "variation_pct": variation,
         "trend": "increasing" if variation > 5 else "decreasing" if variation < -5 else "stable",
     }
@@ -159,15 +158,16 @@ def get_all_lines_summary(
     period: str = Query(default="day", enum=["hour", "day", "week", "month"]),
     db: Session = Depends(get_db),
 ):
-    """
-    Résumé de toutes les lignes pour la période donnée.
-    Utilisé par le Dashboard pour la comparaison inter-lignes.
-    """
     from sqlalchemy import distinct
     now   = datetime.utcnow()
-    start = now - {"hour": timedelta(hours=1), "day": timedelta(days=1), "week": timedelta(weeks=1), "month": timedelta(days=30)}[period]
+    start = now - {
+        "hour":  timedelta(hours=1),
+        "day":   timedelta(days=1),
+        "week":  timedelta(weeks=1),
+        "month": timedelta(days=30),
+    }[period]
 
-    lines = [r[0] for r in db.query(distinct(TelemetryRecord.production_line)).all() if r[0]]
+    lines  = [r[0] for r in db.query(distinct(TelemetryRecord.production_line)).all() if r[0]]
     result = {}
 
     for line in sorted(lines):
@@ -176,7 +176,6 @@ def get_all_lines_summary(
             .filter(
                 TelemetryRecord.production_line == line,
                 TelemetryRecord.timestamp       >= start,
-                TelemetryRecord.source          != "simulator",
             )
             .order_by(desc(TelemetryRecord.timestamp))
             .limit(100)
@@ -191,7 +190,7 @@ def get_all_lines_summary(
             "avg_kw":     round(sum(kw_vals) / len(kw_vals), 2) if kw_vals else 0,
             "max_kw":     round(max(kw_vals), 2) if kw_vals else 0,
             "total_cost": round(sum(costs), 4),
-            "total_co2":  round(sum(co2s), 3),
+            "total_co2":  round(sum(co2s),  3),
             "records":    len(records),
         }
 

@@ -1,20 +1,14 @@
-/**
- * EnergyPriceAnalysis.jsx — Analyse des prix d'énergie par heure
- * Tarifs ONEE Maroc : Heures Pleines / Heures Creuses / Heures de Pointe
- * CDC requirement: analyse des prix d'énergie
- */
-
 import { useState, useMemo } from "react";
 
-// ─── Tarifs ONEE Maroc ────────────────────────────────────────────────────────
+// ─── Tarifs ONEE Maroc en MAD/kWh ────────────────────────────────────────────
 const ONEE_TARIFFS = {
-  peak:     { label: "Heures de Pointe",  hours: [7, 8, 12, 13, 19, 20, 21],      rate: 0.1628, color: "#e53e3e", bg: "#fff5f5", border: "#fed7d7" },
-  full:     { label: "Heures Pleines",    hours: [9, 10, 11, 14, 15, 16, 17, 18], rate: 0.1214, color: "#ed8936", bg: "#fffbeb", border: "#fbd38d" },
-  offPeak:  { label: "Heures Creuses",    hours: [0, 1, 2, 3, 4, 5, 6, 22, 23],   rate: 0.0836, color: "#38a169", bg: "#f0fff4", border: "#c6f6d5" },
+  peak:    { label: "Heures de Pointe", hours: [7, 8, 12, 13, 19, 20, 21],      rate: 1.628, color: "#e53e3e", bg: "#fff5f5", border: "#fed7d7" },
+  full:    { label: "Heures Pleines",   hours: [9, 10, 11, 14, 15, 16, 17, 18], rate: 1.214, color: "#ed8936", bg: "#fffbeb", border: "#fbd38d" },
+  offPeak: { label: "Heures Creuses",   hours: [0, 1, 2, 3, 4, 5, 6, 22, 23],   rate: 0.836, color: "#38a169", bg: "#f0fff4", border: "#c6f6d5" },
 };
 
-const CO2_FACTOR     = 0.718; // kgCO₂/kWh ONEE
-const HOURS_IN_DAY   = Array.from({ length: 24 }, (_, i) => i);
+const CO2_FACTOR   = 0.718;
+const HOURS_IN_DAY = Array.from({ length: 24 }, (_, i) => i);
 
 function getTariffForHour(hour) {
   if (ONEE_TARIFFS.peak.hours.includes(hour))    return "peak";
@@ -26,7 +20,6 @@ function formatHour(h) {
   return `${String(h).padStart(2, "0")}:00`;
 }
 
-// Graphe SVG barres coût par heure
 function HourlyCostChart({ hourlyData }) {
   const W    = 700;
   const H    = 180;
@@ -35,26 +28,22 @@ function HourlyCostChart({ hourlyData }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }} preserveAspectRatio="none">
-      {/* Grille */}
-      {[0, 1, 2, 3].map(i => (
-        <line key={i} x1={20} y1={10 + i * (H - 35) / 3}
-          x2={W - 10} y2={10 + i * (H - 35) / 3}
+      {[0,1,2,3].map(i => (
+        <line key={i} x1={20} y1={10 + i * (H-35)/3}
+          x2={W-10} y2={10 + i * (H-35)/3}
           stroke="var(--border-color)" strokeWidth="1" strokeDasharray="4,4" />
       ))}
-
-      {/* Barres */}
       {hourlyData.map((item, i) => {
         const tariff = ONEE_TARIFFS[item.tariffKey];
-        const barH   = Math.max(3, (item.cost / maxV) * (H - 45));
+        const barH   = Math.max(3, (item.cost / maxV) * (H-45));
         const x      = 20 + i * barW + 2;
         const y      = H - 30 - barH;
-
         return (
           <g key={i}>
-            <rect x={x} y={y} width={barW - 4} height={barH}
+            <rect x={x} y={y} width={barW-4} height={barH}
               fill={tariff.color} rx="3" opacity="0.85" />
             {i % 4 === 0 && (
-              <text x={x + (barW - 4) / 2} y={H - 14}
+              <text x={x + (barW-4)/2} y={H-14}
                 textAnchor="middle" fontSize="9" fill="var(--text-secondary)">
                 {formatHour(i)}
               </text>
@@ -62,12 +51,10 @@ function HourlyCostChart({ hourlyData }) {
           </g>
         );
       })}
-
-      {/* Légende */}
       {Object.entries(ONEE_TARIFFS).map(([key, t], i) => (
         <g key={key}>
-          <rect x={20 + i * 160} y={H - 6} width={10} height={6} fill={t.color} rx="2" />
-          <text x={34 + i * 160} y={H - 1} fontSize="9" fill="var(--text-secondary)">{t.label}</text>
+          <rect x={20 + i*160} y={H-6} width={10} height={6} fill={t.color} rx="2" />
+          <text x={34 + i*160} y={H-1} fontSize="9" fill="var(--text-secondary)">{t.label}</text>
         </g>
       ))}
     </svg>
@@ -82,7 +69,6 @@ export default function EnergyPriceAnalysis({
   const [dailyKwh,    setDailyKwh]    = useState("500");
   const [selectedDay, setSelectedDay] = useState("weekday");
 
-  // Distribution typique de consommation par heure (%)
   const consumptionProfile = {
     weekday: [3, 2, 2, 2, 2, 3, 5, 7, 6, 6, 6, 6, 5, 5, 6, 6, 6, 5, 5, 6, 5, 4, 3, 2],
     weekend: [2, 2, 2, 2, 2, 2, 3, 4, 5, 6, 7, 7, 6, 6, 5, 5, 5, 5, 5, 5, 4, 3, 3, 2],
@@ -91,7 +77,6 @@ export default function EnergyPriceAnalysis({
   const totalKwh = parseFloat(dailyKwh) || 500;
   const profile  = consumptionProfile[selectedDay];
 
-  // Calcul données horaires
   const hourlyData = useMemo(() => {
     return HOURS_IN_DAY.map(hour => {
       const pct       = profile[hour] / 100;
@@ -104,9 +89,12 @@ export default function EnergyPriceAnalysis({
     });
   }, [totalKwh, selectedDay]);
 
-  // Totaux par type de tarif
   const tariffSummary = useMemo(() => {
-    const summary = { peak: { kwh: 0, cost: 0, hours: 0 }, full: { kwh: 0, cost: 0, hours: 0 }, offPeak: { kwh: 0, cost: 0, hours: 0 } };
+    const summary = {
+      peak:    { kwh: 0, cost: 0, hours: 0 },
+      full:    { kwh: 0, cost: 0, hours: 0 },
+      offPeak: { kwh: 0, cost: 0, hours: 0 },
+    };
     hourlyData.forEach(d => {
       summary[d.tariffKey].kwh   += d.kwh;
       summary[d.tariffKey].cost  += d.cost;
@@ -115,17 +103,13 @@ export default function EnergyPriceAnalysis({
     return summary;
   }, [hourlyData]);
 
-  const totalCost    = hourlyData.reduce((s, d) => s + d.cost, 0);
-  const totalCo2     = hourlyData.reduce((s, d) => s + d.co2, 0);
-  const avgRate      = totalCost / (totalKwh || 1);
-
-  // Économie potentielle si on déplace vers heures creuses
-  const peakCost     = tariffSummary.peak.cost;
+  const totalCost     = hourlyData.reduce((s, d) => s + d.cost, 0);
+  const totalCo2      = hourlyData.reduce((s, d) => s + d.co2,  0);
+  const avgRate       = totalCost / (totalKwh || 1);
+  const peakCost      = tariffSummary.peak.cost;
   const savingIfShift = peakCost * (1 - ONEE_TARIFFS.offPeak.rate / ONEE_TARIFFS.peak.rate);
-
-  // Meilleure heure pour la consommation
-  const bestHour  = hourlyData.reduce((min, d) => d.rate < min.rate ? d : min, hourlyData[0]);
-  const worstHour = hourlyData.reduce((max, d) => d.rate > max.rate ? d : max, hourlyData[0]);
+  const bestHour      = hourlyData.reduce((min, d) => d.rate < min.rate ? d : min, hourlyData[0]);
+  const worstHour     = hourlyData.reduce((max, d) => d.rate > max.rate ? d : max, hourlyData[0]);
 
   return (
     <div className="overview-page">
@@ -133,7 +117,7 @@ export default function EnergyPriceAnalysis({
         <div>
           <h1>Energy Price Analysis</h1>
           <p className="page-subtitle">
-            ONEE Morocco tariff structure — Peak / Full / Off-peak hours · {selectedLineLabel}
+            ONEE Morocco tariff — Peak / Full / Off-peak · All prices in <strong>MAD</strong> · {selectedLineLabel}
           </p>
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -144,7 +128,7 @@ export default function EnergyPriceAnalysis({
                 fontWeight: selectedDay === d ? 700 : 400, fontSize: "0.82rem",
                 background: selectedDay === d ? "#2563eb" : "var(--bg-card)",
                 color:      selectedDay === d ? "#fff"    : "var(--text-main)",
-                border:     "1px solid var(--border-color)",
+                border: "1px solid var(--border-color)",
               }}>
               {d === "weekday" ? "📅 Weekday" : "🏖️ Weekend"}
             </button>
@@ -152,11 +136,11 @@ export default function EnergyPriceAnalysis({
         </div>
       </div>
 
-      {/* Input consommation journalière */}
+      {/* Input consommation */}
       <section className="section-block">
         <div className="panel-card">
           <div className="panel-head">
-            <div><h2>Daily Consumption</h2><p>Enter your daily electricity consumption to calculate costs</p></div>
+            <div><h2>Daily Consumption</h2><p>Enter your daily electricity consumption to calculate costs in MAD</p></div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
             <div>
@@ -164,8 +148,7 @@ export default function EnergyPriceAnalysis({
                 Daily kWh consumption
               </label>
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <input
-                  type="number" min="1" step="10"
+                <input type="number" min="1" step="10"
                   value={dailyKwh}
                   onChange={e => setDailyKwh(e.target.value)}
                   style={{
@@ -175,13 +158,12 @@ export default function EnergyPriceAnalysis({
                     fontSize: "1rem", fontWeight: 700, textAlign: "center", outline: "none",
                   }}
                   onFocus={e => e.target.style.borderColor = "#2563eb"}
-                  onBlur={e => e.target.style.borderColor = "var(--border-color)"}
+                  onBlur={e  => e.target.style.borderColor = "var(--border-color)"}
                 />
                 <span style={{ fontWeight: 600, color: "var(--text-secondary)" }}>kWh/day</span>
               </div>
             </div>
 
-            {/* Boutons rapides */}
             <div>
               <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--text-secondary)", display: "block", marginBottom: "0.3rem" }}>
                 Quick presets
@@ -200,7 +182,7 @@ export default function EnergyPriceAnalysis({
                       fontSize: "0.78rem", fontWeight: 600,
                       background: dailyKwh === preset.value ? "#2563eb" : "var(--bg-main)",
                       color:      dailyKwh === preset.value ? "#fff"    : "var(--text-secondary)",
-                      border:     "1px solid var(--border-color)",
+                      border: "1px solid var(--border-color)",
                     }}>
                     {preset.label}
                   </button>
@@ -208,7 +190,6 @@ export default function EnergyPriceAnalysis({
               </div>
             </div>
 
-            {/* Live depuis DataPlatform */}
             {peakKw > 0 && (
               <div style={{ background: "#ebf8ff", border: "1px solid #bee3f8", borderRadius: "10px", padding: "0.6rem 1rem" }}>
                 <div style={{ fontSize: "0.72rem", color: "#2b6cb0", fontWeight: 700, marginBottom: "2px" }}></div>
@@ -221,18 +202,18 @@ export default function EnergyPriceAnalysis({
         </div>
       </section>
 
-      {/* KPIs principaux */}
+      {/* KPIs en MAD */}
       <section className="section-block">
         <div className="carbon-kpis">
           <div className="carbon-card">
             <h4>💰 Total Daily Cost</h4>
-            <strong style={{ color: "#e53e3e", fontSize: "1.3rem" }}>{totalCost.toFixed(4)} $</strong>
+            <strong style={{ color: "#e53e3e", fontSize: "1.1rem" }}>{totalCost.toFixed(2)} MAD</strong>
             <span>For {totalKwh} kWh consumed</span>
           </div>
           <div className="carbon-card">
             <h4>📊 Average Rate</h4>
-            <strong style={{ color: "#4299e1" }}>{avgRate.toFixed(4)} $/kWh</strong>
-            <span>Blended tariff rate</span>
+            <strong style={{ color: "#4299e1" }}>{avgRate.toFixed(4)} MAD/kWh</strong>
+            <span>Blended ONEE tariff</span>
           </div>
           <div className="carbon-card">
             <h4>🌱 Daily CO₂</h4>
@@ -241,27 +222,28 @@ export default function EnergyPriceAnalysis({
           </div>
           <div className="carbon-card">
             <h4>💡 Savings Potential</h4>
-            <strong style={{ color: "#276749" }}>
-              {savingIfShift.toFixed(4)} $
-            </strong>
-            <span>If peak loads shifted to off-peak</span>
+            <strong style={{ color: "#276749" }}>{savingIfShift.toFixed(2)} MAD</strong>
+            <span>If peak loads → off-peak</span>
           </div>
           <div className="carbon-card">
             <h4>⚡ Best Hour</h4>
             <strong style={{ color: "#38a169" }}>{formatHour(bestHour.hour)}</strong>
-            <span>{ONEE_TARIFFS[bestHour.tariffKey].rate} $/kWh — Off-peak</span>
+            <span>{ONEE_TARIFFS.offPeak.rate} MAD/kWh — Off-peak</span>
           </div>
           <div className="carbon-card">
             <h4>⚠️ Most Expensive</h4>
             <strong style={{ color: "#e53e3e" }}>{formatHour(worstHour.hour)}</strong>
-            <span>{ONEE_TARIFFS[worstHour.tariffKey].rate} $/kWh — Peak</span>
+            <span>{ONEE_TARIFFS.peak.rate} MAD/kWh — Peak</span>
           </div>
         </div>
       </section>
 
-      {/* Grille tarifaire ONEE */}
+      {/* Grille tarifaire ONEE en MAD */}
       <section className="section-block">
-        <div className="section-title-wrap"><h2>ONEE Tariff Structure</h2><p>Moroccan electricity tariff — 3 time-of-use periods</p></div>
+        <div className="section-title-wrap">
+          <h2>ONEE Tariff Structure — Morocco</h2>
+          <p>3 time-of-use periods — rates in MAD/kWh</p>
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1rem" }}>
           {Object.entries(ONEE_TARIFFS).map(([key, t]) => {
             const s = tariffSummary[key];
@@ -275,7 +257,7 @@ export default function EnergyPriceAnalysis({
                   {t.label}
                 </div>
                 <div style={{ fontSize: "1.6rem", fontWeight: 800, color: t.color, marginBottom: "0.75rem" }}>
-                  {t.rate} $/kWh
+                  {t.rate} MAD/kWh
                 </div>
                 <div style={{ fontSize: "0.82rem", color: "#4a5568", marginBottom: "0.75rem" }}>
                   <strong>Hours ({t.hours.length}h):</strong>{" "}
@@ -288,7 +270,7 @@ export default function EnergyPriceAnalysis({
                   </div>
                   <div style={{ background: "rgba(255,255,255,0.6)", borderRadius: "8px", padding: "0.5rem", textAlign: "center" }}>
                     <div style={{ color: "#718096", fontSize: "0.7rem" }}>Cost</div>
-                    <div style={{ fontWeight: 700, color: t.color }}>{s.cost.toFixed(4)} $</div>
+                    <div style={{ fontWeight: 700, color: t.color }}>{s.cost.toFixed(2)} MAD</div>
                   </div>
                 </div>
               </div>
@@ -297,16 +279,12 @@ export default function EnergyPriceAnalysis({
         </div>
       </section>
 
-      {/* Graphe coût par heure */}
+      {/* Graphe horaire */}
       <section className="section-block">
         <div className="panel-card">
           <div className="panel-head">
-            <div><h2>Hourly Cost Distribution</h2><p>Cost per hour of day based on ONEE tariff — {selectedDay}</p></div>
-            <div style={{
-              background: "#ebf8ff", color: "#2b6cb0",
-              border: "1px solid #bee3f8", borderRadius: "8px",
-              padding: "4px 12px", fontSize: "0.78rem", fontWeight: 700,
-            }}>
+            <div><h2>Hourly Cost Distribution</h2><p>Cost per hour — ONEE tariff — {selectedDay}</p></div>
+            <div style={{ background: "#ebf8ff", color: "#2b6cb0", border: "1px solid #bee3f8", borderRadius: "8px", padding: "4px 12px", fontSize: "0.78rem", fontWeight: 700 }}>
               {totalKwh} kWh/day
             </div>
           </div>
@@ -314,18 +292,18 @@ export default function EnergyPriceAnalysis({
         </div>
       </section>
 
-      {/* Tableau détaillé par heure */}
+      {/* Tableau horaire */}
       <section className="section-block">
-        <div className="section-title-wrap"><h2>Detailed Hourly Breakdown</h2><p>All 24 hours with costs and CO₂</p></div>
+        <div className="section-title-wrap"><h2>Detailed Hourly Breakdown</h2><p>All 24 hours with costs in MAD and CO₂</p></div>
         <div className="table-card">
           <table>
             <thead>
               <tr>
                 <th>Hour</th>
                 <th>Tariff Period</th>
-                <th>Rate ($/kWh)</th>
+                <th>Rate (MAD/kWh)</th>
                 <th>Consumption (kWh)</th>
-                <th>Cost ($)</th>
+                <th>Cost (MAD)</th>
                 <th>CO₂ (kg)</th>
                 <th>Recommendation</th>
               </tr>
@@ -348,7 +326,7 @@ export default function EnergyPriceAnalysis({
                     </td>
                     <td style={{ fontWeight: 700, color: t.color }}>{t.rate}</td>
                     <td>{item.kwh.toFixed(2)}</td>
-                    <td style={{ fontWeight: 700 }}>{item.cost.toFixed(4)}</td>
+                    <td style={{ fontWeight: 700, color: "#d69e2e" }}>{item.cost.toFixed(2)}</td>
                     <td style={{ color: "#38a169" }}>{item.co2.toFixed(3)}</td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
                       {item.tariffKey === "offPeak" ? "✅ Ideal for heavy loads" :
@@ -369,36 +347,28 @@ export default function EnergyPriceAnalysis({
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
           {[
             {
-              icon:    "🌙",
-              title:   "Shift heavy loads to off-peak hours (00h–06h, 22h–23h)",
-              desc:    `Save ${savingIfShift.toFixed(4)} $ daily by running high-consumption equipment during off-peak hours at ${ONEE_TARIFFS.offPeak.rate} $/kWh instead of ${ONEE_TARIFFS.peak.rate} $/kWh.`,
-              color:   "#38a169",
-              bg:      "#f0fff4",
-              border:  "#c6f6d5",
+              icon: "🌙",
+              title: "Shift heavy loads to off-peak hours (00h–06h, 22h–23h)",
+              desc: `Save ${savingIfShift.toFixed(2)} MAD daily by running equipment at ${ONEE_TARIFFS.offPeak.rate} MAD/kWh instead of ${ONEE_TARIFFS.peak.rate} MAD/kWh.`,
+              color: "#38a169", bg: "#f0fff4", border: "#c6f6d5",
             },
             {
-              icon:    "⏰",
-              title:   "Avoid 7h–9h and 19h–21h (peak hours)",
-              desc:    `These are the most expensive hours at ${ONEE_TARIFFS.peak.rate} $/kWh. Schedule non-urgent processes outside these windows.`,
-              color:   "#e53e3e",
-              bg:      "#fff5f5",
-              border:  "#fed7d7",
+              icon: "⏰",
+              title: "Avoid 7h–9h and 19h–21h (peak hours)",
+              desc: `Most expensive hours at ${ONEE_TARIFFS.peak.rate} MAD/kWh. Schedule non-urgent processes outside these windows.`,
+              color: "#e53e3e", bg: "#fff5f5", border: "#fed7d7",
             },
             {
-              icon:    "📅",
-              title:   "Schedule maintenance during off-peak hours",
-              desc:    "Equipment testing and maintenance performed at night reduces energy costs significantly.",
-              color:   "#4299e1",
-              bg:      "#ebf8ff",
-              border:  "#bee3f8",
+              icon: "📅",
+              title: "Schedule maintenance during off-peak hours",
+              desc: "Equipment testing performed at night reduces energy costs significantly.",
+              color: "#4299e1", bg: "#ebf8ff", border: "#bee3f8",
             },
             {
-              icon:    "☀️",
-              title:   "Solar panels can reduce peak demand charges",
-              desc:    `Solar production during peak hours (10h–16h) can offset ${ONEE_TARIFFS.full.rate}–${ONEE_TARIFFS.peak.rate} $/kWh rates. ROI typically 5–7 years in Morocco.`,
-              color:   "#d69e2e",
-              bg:      "#fffbeb",
-              border:  "#fbd38d",
+              icon: "☀️",
+              title: "Solar panels can reduce peak demand charges",
+              desc: `Solar production (10h–16h) can offset ${ONEE_TARIFFS.full.rate}–${ONEE_TARIFFS.peak.rate} MAD/kWh rates. ROI typically 5–7 years in Morocco.`,
+              color: "#d69e2e", bg: "#fffbeb", border: "#fbd38d",
             },
           ].map((rec, i) => (
             <div key={i} style={{
@@ -419,17 +389,20 @@ export default function EnergyPriceAnalysis({
         </div>
       </section>
 
-      {/* Comparaison annuelle */}
+      {/* Projection annuelle en MAD */}
       <section className="section-block">
-        <div className="section-title-wrap"><h2>Annual Cost Projection</h2><p>Estimated yearly costs based on daily consumption of {totalKwh} kWh</p></div>
+        <div className="section-title-wrap">
+          <h2>Annual Cost Projection</h2>
+          <p>Estimated yearly costs — {totalKwh} kWh/day — in MAD</p>
+        </div>
         <div className="carbon-kpis">
           {[
-            { label: "Daily Cost",    value: `${totalCost.toFixed(4)} $`,                  sub: `${totalKwh} kWh/day` },
-            { label: "Weekly Cost",   value: `${(totalCost * 7).toFixed(3)} $`,            sub: `${(totalKwh * 7).toFixed(0)} kWh/week` },
-            { label: "Monthly Cost",  value: `${(totalCost * 30).toFixed(2)} $`,           sub: `${(totalKwh * 30).toFixed(0)} kWh/month` },
-            { label: "Annual Cost",   value: `${(totalCost * 365).toFixed(2)} $`,          sub: `${(totalKwh * 365).toFixed(0)} kWh/year` },
-            { label: "Annual CO₂",    value: `${(totalCo2 * 365 / 1000).toFixed(3)} tCO₂`, sub: "tCO₂e/year" },
-            { label: "Annual Saving", value: `${(savingIfShift * 365).toFixed(2)} $`,      sub: "If peak loads shifted", color: "#38a169" },
+            { label: "Daily Cost",    value: `${totalCost.toFixed(2)} MAD`,                  sub: `${totalKwh} kWh/day` },
+            { label: "Weekly Cost",   value: `${(totalCost * 7).toFixed(2)} MAD`,            sub: `${(totalKwh * 7).toFixed(0)} kWh/week` },
+            { label: "Monthly Cost",  value: `${(totalCost * 30).toFixed(2)} MAD`,           sub: `${(totalKwh * 30).toFixed(0)} kWh/month` },
+            { label: "Annual Cost",   value: `${(totalCost * 365).toFixed(2)} MAD`,          sub: `${(totalKwh * 365).toFixed(0)} kWh/year` },
+            { label: "Annual CO₂",    value: `${(totalCo2 * 365 / 1000).toFixed(3)} tCO₂`,  sub: "tonnes CO₂/year" },
+            { label: "Annual Saving", value: `${(savingIfShift * 365).toFixed(2)} MAD`,      sub: "If peak loads shifted", color: "#38a169" },
           ].map(item => (
             <div key={item.label} className="carbon-card">
               <h4>{item.label}</h4>

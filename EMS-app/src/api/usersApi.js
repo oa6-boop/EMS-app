@@ -1,120 +1,86 @@
-const API_BASE_URL = "http://127.0.0.1:8000/api";
+const hostname     = window.location.hostname;
+const API_BASE_URL = `http://${hostname}:8000`;
 
-export async function fetchUsers(token) {
-  const response = await fetch(`${API_BASE_URL}/users`, {
+async function apiFetch(url, options = {}, token = null) {
+  const t = token || localStorage.getItem("token");
+  const response = await fetch(url, {
+    ...options,
     headers: {
-      Authorization: `Bearer ${token}`,
+      "Content-Type":  "application/json",
+      ...(t ? { Authorization: `Bearer ${t}` } : {}),
+      ...options.headers,
     },
   });
 
-  const result = await response.json();
-
+  const result = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(result.detail || "Failed to fetch users");
+    const msg = typeof result.detail === "string"
+      ? result.detail
+      : Array.isArray(result.detail)
+      ? result.detail.map(i => i.msg).join(" | ")
+      : `Error ${response.status}`;
+    throw new Error(msg);
   }
-
   return result;
 }
 
-export async function createUser(userData, token) {
-  const payload = {
-    first_name: userData.firstName,
-    last_name: userData.lastName,
-    email: userData.email,
-    password: userData.password,
-    role: "user",
-  };
+// ─── Utilisateurs ─────────────────────────────────────────────────────────────
+export const fetchUsers = (token) =>
+  apiFetch(`${API_BASE_URL}/api/users`, {}, token);
 
-  const response = await fetch(`${API_BASE_URL}/users`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const result = await response.json();
-
-  if (!response.ok) {
-    const errorMessage =
-      typeof result.detail === "string"
-        ? result.detail
-        : Array.isArray(result.detail)
-        ? result.detail.map((item) => item.msg).join(" | ")
-        : "Failed to create user";
-
-    throw new Error(errorMessage);
-  }
-
-  return result;
-}
-
-export async function deleteUser(userId, token) {
-  const response = await fetch(`${API_BASE_URL}/users/${userId}`, {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new Error(result.detail || "Failed to delete user");
-  }
-
-  return result;
-}
-
-export async function fetchUrgentMessages(token) {
-  const response = await fetch(`${API_BASE_URL}/admin/urgent-messages`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new Error(result.detail || "Failed to fetch urgent messages");
-  }
-
-  return result;
-}
-
-export async function fetchUrgentMessagesCount(token) {
-  const response = await fetch(`${API_BASE_URL}/admin/urgent-messages/count`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new Error(result.detail || "Failed to fetch urgent count");
-  }
-
-  return result;
-}
-
-export async function regenerateUserPassword(requestId, token) {
-  const response = await fetch(
-    `${API_BASE_URL}/admin/urgent-messages/${requestId}/regenerate`,
+export const createUser = (data, token) =>
+  apiFetch(
+    `${API_BASE_URL}/api/users`,
     {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
+      body: JSON.stringify({
+        first_name: data.firstName,
+        last_name:  data.lastName,
+        email:      data.email,
+        password:   data.password,
+        role:       data.role || "management",
+      }),
+    },
+    token
   );
 
-  const result = await response.json();
+export const deleteUser = (userId, token) =>
+  apiFetch(`${API_BASE_URL}/api/users/${userId}`, { method: "DELETE" }, token);
 
-  if (!response.ok) {
-    throw new Error(result.detail || "Failed to regenerate password");
-  }
+export const updateUserRole = (userId, role, token) =>
+  apiFetch(
+    `${API_BASE_URL}/api/users/${userId}/role`,
+    { method: "PATCH", body: JSON.stringify({ role }) },
+    token
+  );
 
-  return result;
-}
+// ─── Mise à jour profil + mot de passe ───────────────────────────────────────
+// Envoie au backend et met à jour la base de données
+export const updateMyProfile = (data, token) =>
+  apiFetch(
+    `${API_BASE_URL}/api/users/me/profile`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        firstName:    data.firstName,
+        lastName:     data.lastName,
+        password:     data.password || "",
+        profileImage: data.profileImage || "",
+      }),
+    },
+    token
+  );
+
+// ─── Urgent Messages ─────────────────────────────────────────────────────────
+export const fetchUrgentMessages = (token) =>
+  apiFetch(`${API_BASE_URL}/api/admin/urgent-messages`, {}, token);
+
+export const fetchUrgentMessagesCount = (token) =>
+  apiFetch(`${API_BASE_URL}/api/admin/urgent-messages/count`, {}, token);
+
+export const regenerateUserPassword = (requestId, token) =>
+  apiFetch(
+    `${API_BASE_URL}/api/admin/urgent-messages/${requestId}/regenerate`,
+    { method: "POST", body: JSON.stringify({}) },
+    token
+  );

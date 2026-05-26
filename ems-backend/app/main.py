@@ -26,7 +26,7 @@ from app.routes.thresholds  import router as thresholds_router
 from app.routes.maintenance import router as maintenance_router
 from app.routes.sec         import router as sec_router
 from app.routes.energy_rates import router as energy_rates_router
-
+from app.routes.weather import router as weather_router
 from app.services.email_report import start_daily_report_scheduler
 
 app = FastAPI(title=APP_NAME)
@@ -222,4 +222,5 @@ app.include_router(history_router)
 app.include_router(thresholds_router)
 app.include_router(maintenance_router)
 app.include_router(sec_router)
-app.include_router(energy_rates_router)  # ← Nouveau
+app.include_router(energy_rates_router)  
+app.include_router(weather_router)

@@ -2,20 +2,17 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { askChatbot } from "../api/chatbotApi";
 
 const QUICK_QUESTIONS = [
-  "General status overview",
-  "What is the total cost?",
-  "Any alarms right now?",
-  "Give me recommendations",
-  "What is the power factor?",
-  "What are CO₂ emissions?",
-  "What is the highest consumption?",
-  "Explain THD",
-  "Explain Modbus",
-  "Statut général",
-  "Y a-t-il des alarmes?",
+  "Statut général de la ligne",
+  "Y a-t-il des anomalies?",
   "Recommandations d'optimisation",
+  "Quel est le coût total en MAD?",
+  "Analyser le facteur de puissance",
+  "General status overview",
+  "Any anomalies detected?",
+  "Optimization recommendations",
+  "What is the CO₂ emission?",
+  "Explain power quality",
 ];
-
 function renderMarkdown(text) {
   if (!text) return null;
   const lines = text.split("\n");

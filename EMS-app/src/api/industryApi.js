@@ -1,48 +1,35 @@
-const API_BASE_URL = "http://127.0.0.1:8000/api/industry";
+const hostname = window.location.hostname;
+const API_BASE = `http://${hostname}:8000/api/industry`;
+const getToken = () => localStorage.getItem("token") || "";
+
+const authHeaders = () => ({
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${getToken()}`,
+});
 
 export async function fetchIndustryKpis() {
-  const response = await fetch(`${API_BASE_URL}/kpis`);
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new Error(result.detail || "Failed to fetch industry KPIs");
-  }
-
-  return result;
+  const r = await fetch(`${API_BASE}/kpis`, { headers: authHeaders() });
+  if (!r.ok) throw new Error("Failed to fetch industry KPIs");
+  return r.json();
 }
 
 export async function fetchIndustryAlarms() {
-  const response = await fetch(`${API_BASE_URL}/alarms`);
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new Error(result.detail || "Failed to fetch alarms");
-  }
-
-  return result;
+  const r = await fetch(`${API_BASE}/alarms`, { headers: authHeaders() });
+  if (!r.ok) throw new Error("Failed to fetch alarms");
+  return r.json();
 }
 
 export async function resolveAlarm(alarmId) {
-  const response = await fetch(`${API_BASE_URL}/alarms/${alarmId}/resolve`, {
+  const r = await fetch(`${API_BASE}/alarms/${alarmId}/resolve`, {
     method: "POST",
+    headers: authHeaders(),
   });
-
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new Error(result.detail || "Failed to resolve alarm");
-  }
-
-  return result;
+  if (!r.ok) throw new Error("Failed to resolve alarm");
+  return r.json();
 }
 
 export async function fetchEnergyHistory() {
-  const response = await fetch(`${API_BASE_URL}/history`);
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new Error(result.detail || "Failed to fetch energy history");
-  }
-
-  return result;
+  const r = await fetch(`${API_BASE}/history`, { headers: authHeaders() });
+  if (!r.ok) throw new Error("Failed to fetch energy history");
+  return r.json();
 }

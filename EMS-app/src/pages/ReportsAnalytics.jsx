@@ -240,7 +240,7 @@ export default function ReportsAnalytics({
           <div className="carbon-card">
             <h4>CO₂ Emissions</h4>
             <strong style={{ color:"#38a169" }}>{Number(totalCo2).toFixed(3)} kg</strong>
-            <span>kWh × 0.718 ONEE</span>
+            <span>kWh × 0.718 </span>
           </div>
           <div className="carbon-card">
             <h4>Power Factor</h4>
@@ -400,7 +400,6 @@ export default function ReportsAnalytics({
             <div className="carbon-card">
               <h4>CO₂ Factor</h4>
               <strong>0.718 kgCO₂/kWh</strong>
-              <span>ONEE Morocco grid</span>
             </div>
           </div>
         </section>

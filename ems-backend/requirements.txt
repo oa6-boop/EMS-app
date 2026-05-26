@@ -15,3 +15,7 @@ email-validator
 aiofiles
 httpx
 websockets
+requests
+numpy
+scikit-learn
+kafka-python

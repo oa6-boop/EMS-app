@@ -1,142 +1,381 @@
 import { useEffect, useState } from "react";
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
 function formatTime(value) {
-  return new Date(value).toLocaleString();
+  if (!value) return "N/A";
+
+  try {
+    return new Date(value).toLocaleString("en", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return value;
+  }
 }
 
-const WEATHER_CODES = {
-  0: "☀️ Clear sky", 1: "🌤️ Mainly clear", 2: "⛅ Partly cloudy", 3: "☁️ Overcast",
-  45: "🌫️ Fog", 48: "🌫️ Icy fog", 51: "🌦️ Light drizzle", 53: "🌦️ Drizzle",
-  61: "🌧️ Slight rain", 63: "🌧️ Rain", 71: "🌨️ Slight snow", 73: "❄️ Snow",
-  80: "🌦️ Showers", 95: "⛈️ Thunderstorm",
-};
+function formatDay(value) {
+  if (!value) return "N/A";
 
-export default function WeatherPage({ selectedLineLabel }) {
+  try {
+    return new Date(value).toLocaleDateString("en", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return value;
+  }
+}
+
+function getAuthHeaders() {
+  const token =
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    "";
+
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function cleanText(value) {
+  if (!value) return "N/A";
+
+  return String(value)
+    .replace(/[^\x00-\x7FÀ-ÿ\s.,'-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export default function WeatherPage({ selectedLineLabel = "Production Line 1" }) {
   const [weather, setWeather] = useState(null);
-  const [status,  setStatus]  = useState("loading");
-  const [error,   setError]   = useState("");
+  const [status, setStatus] = useState("loading");
+  const [error, setError] = useState("");
+  const [permissionMessage, setPermissionMessage] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadWeather = async (lat, lon) => {
+    try {
+      setStatus("loading");
+      setError("");
+      setPermissionMessage("");
 
-    const loadWeather = async (lat, lon) => {
-      try {
-        const res = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min&timezone=auto`
-        );
-        if (!res.ok) throw new Error("Weather service unavailable");
-        const data = await res.json();
-        if (!cancelled) { setWeather(data); setStatus("success"); }
-      } catch (err) {
-        if (!cancelled) { setError(err.message); setStatus("error"); }
+      const response = await fetch(
+        `${API_BASE_URL}/api/weather?lat=${lat}&lon=${lon}`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            ...getAuthHeaders(),
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Weather service unavailable");
       }
-    };
+
+      const data = await response.json();
+
+      setWeather(data);
+      setStatus("success");
+    } catch (err) {
+      console.error("Weather error:", err);
+      setError("Failed to fetch weather data. Please check backend connection.");
+      setStatus("error");
+    }
+  };
+
+  const requestLocation = () => {
+    setStatus("loading");
+    setError("");
+    setPermissionMessage("");
 
     if (!navigator.geolocation) {
-      loadWeather(33.5731, -7.5898); // Casablanca default
-      return () => { cancelled = true; };
+      setPermissionMessage("Geolocation is not supported by this browser.");
+      setStatus("permission");
+      return;
     }
 
     navigator.geolocation.getCurrentPosition(
-      pos => loadWeather(pos.coords.latitude, pos.coords.longitude),
-      ()  => loadWeather(33.5731, -7.5898)
-    );
+      (position) => {
+        loadWeather(position.coords.latitude, position.coords.longitude);
+      },
+      (err) => {
+        console.error("Geolocation error:", err);
 
-    return () => { cancelled = true; };
+        if (err.code === err.PERMISSION_DENIED) {
+          setPermissionMessage(
+            "Please allow location access to show exact weather for your current place."
+          );
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          setPermissionMessage("Your current position is unavailable.");
+        } else if (err.code === err.TIMEOUT) {
+          setPermissionMessage("Location request took too long. Please retry.");
+        } else {
+          setPermissionMessage("Unable to detect your current location.");
+        }
+
+        setStatus("permission");
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 60000,
+      }
+    );
+  };
+
+  useEffect(() => {
+    requestLocation();
   }, []);
 
-  const weatherDesc = weather ? (WEATHER_CODES[weather.current?.weather_code] || "🌡️ Unknown") : "";
+  const current = weather?.current || {};
+  const location = weather?.location || {};
+
+  const cityName = cleanText(location.city || "Detected location");
+  const countryName = cleanText(location.country || "Current place");
 
   return (
     <div className="overview-page">
       <div className="section-title-wrap">
         <h1>Weather</h1>
-        <p>Location-based weather — impacts HVAC energy consumption · {selectedLineLabel}</p>
+        <p>
+          Location-based weather — impacts energy consumption ·{" "}
+          {selectedLineLabel}
+        </p>
       </div>
 
-      {status === "loading" && <div className="info-box">⏳ Loading weather data...</div>}
-      {status === "error"   && <div className="alarm-item">⚠ {error}</div>}
+      {status === "loading" && (
+        <div className="info-box">
+          ⏳ Detecting your location and loading weather data...
+        </div>
+      )}
+
+      {status === "permission" && (
+        <div className="alarm-item">
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <strong>📍 Location permission required</strong>
+            <span>{permissionMessage}</span>
+
+            <button
+              type="button"
+              onClick={requestLocation}
+              style={{
+                width: "fit-content",
+                border: "none",
+                borderRadius: "10px",
+                padding: "0.65rem 1rem",
+                background: "#2563eb",
+                color: "#fff",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      )}
+
+      {status === "error" && (
+        <div className="alarm-item">
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <strong>⚠ {error}</strong>
+
+            <button
+              type="button"
+              onClick={requestLocation}
+              style={{
+                width: "fit-content",
+                border: "none",
+                borderRadius: "10px",
+                padding: "0.65rem 1rem",
+                background: "#dc2626",
+                color: "#fff",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      )}
 
       {status === "success" && weather && (
         <>
-          {/* KPIs météo */}
           <section className="section-block">
             <div className="carbon-kpis">
               <div className="carbon-card">
                 <h4>🌡️ Temperature</h4>
-                <strong style={{ fontSize: "1.4rem" }}>{weather.current?.temperature_2m}°C</strong>
-                <span>Feels like {weather.current?.apparent_temperature}°C</span>
+                <strong style={{ fontSize: "1.4rem" }}>
+                  {current.temperature ?? "N/A"}°C
+                </strong>
+                <span>Feels like {current.apparent_temperature ?? "N/A"}°C</span>
               </div>
+
               <div className="carbon-card">
                 <h4>💧 Humidity</h4>
-                <strong style={{ fontSize: "1.4rem" }}>{weather.current?.relative_humidity_2m}%</strong>
+                <strong style={{ fontSize: "1.4rem" }}>
+                  {current.humidity ?? "N/A"}%
+                </strong>
                 <span>Relative humidity</span>
               </div>
+
               <div className="carbon-card">
                 <h4>💨 Wind</h4>
-                <strong style={{ fontSize: "1.4rem" }}>{weather.current?.wind_speed_10m} km/h</strong>
+                <strong style={{ fontSize: "1.4rem" }}>
+                  {current.wind_speed ?? "N/A"} km/h
+                </strong>
                 <span>Surface wind speed</span>
               </div>
+
               <div className="carbon-card">
                 <h4>Sky</h4>
-                <strong style={{ fontSize: "1rem" }}>{weatherDesc}</strong>
-                <span>Weather code: {weather.current?.weather_code}</span>
+                <strong style={{ fontSize: "1rem" }}>
+                  {current.condition || "Unknown"}
+                </strong>
+                <span>Weather code: {current.weather_code ?? "N/A"}</span>
               </div>
+
               <div className="carbon-card">
                 <h4>🌧️ Precipitation</h4>
-                <strong>{weather.current?.precipitation || 0} mm</strong>
+                <strong style={{ fontSize: "1.4rem" }}>
+                  {current.precipitation ?? 0} mm
+                </strong>
                 <span>Current precipitation</span>
               </div>
+
               <div className="carbon-card">
                 <h4>📍 Location</h4>
-                <strong style={{ fontSize: "0.85rem" }}>{weather.latitude?.toFixed(2)}°N, {weather.longitude?.toFixed(2)}°E</strong>
-                <span>{weather.timezone}</span>
+                <strong style={{ fontSize: "0.95rem" }}>{cityName}</strong>
+                <span>{countryName}</span>
               </div>
             </div>
           </section>
 
-          {/* Détails + prévisions */}
           <div className="two-column-layout">
             <section className="panel-card">
-              <div className="panel-head"><div><h2>Location Summary</h2><p>Detected from browser location</p></div></div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", fontSize: "0.9rem" }}>
+              <div className="panel-head">
+                <div>
+                  <h2>Location Summary</h2>
+                  <p>Detected from browser location</p>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem",
+                  fontSize: "0.9rem",
+                }}
+              >
                 {[
-                  { label: "Latitude",  value: `${weather.latitude}°` },
-                  { label: "Longitude", value: `${weather.longitude}°` },
-                  { label: "Timezone",  value: weather.timezone },
-                  { label: "Updated",   value: formatTime(weather.current?.time) },
-                ].map(item => (
-                  <div key={item.label} style={{ display: "flex", justifyContent: "space-between", padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)" }}>
-                    <span style={{ color: "var(--text-secondary)" }}>{item.label}</span>
-                    <strong>{item.value}</strong>
+                  { label: "City", value: cityName },
+                  { label: "Country", value: countryName },
+                  {
+                    label: "Latitude",
+                    value: `${weather.latitude?.toFixed?.(5) ?? "N/A"}°`,
+                  },
+                  {
+                    label: "Longitude",
+                    value: `${weather.longitude?.toFixed?.(5) ?? "N/A"}°`,
+                  },
+                  { label: "Timezone", value: weather.timezone || "N/A" },
+                  { label: "Updated", value: formatTime(weather.updated_at) },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "1rem",
+                      padding: "0.5rem 0",
+                      borderBottom: "1px solid var(--border-color)",
+                    }}
+                  >
+                    <span style={{ color: "var(--text-secondary)" }}>
+                      {item.label}
+                    </span>
+                    <strong style={{ textAlign: "right" }}>{item.value}</strong>
                   </div>
                 ))}
               </div>
-              <div style={{ marginTop: "1rem", padding: "0.75rem", background: "var(--bg-main)", borderRadius: "8px", fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-                💡 Hot weather (+35°C) increases HVAC consumption by up to 20%. Cold weather affects production line efficiency.
+
+              <div
+                style={{
+                  marginTop: "1rem",
+                  padding: "0.75rem",
+                  background: "var(--bg-main)",
+                  borderRadius: "8px",
+                  fontSize: "0.82rem",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                💡 Weather data is based on the current browser location.
               </div>
             </section>
 
             <section className="panel-card">
-              <div className="panel-head"><div><h2>3-Day Outlook</h2><p>Daily temperature forecast</p></div></div>
+              <div className="panel-head">
+                <div>
+                  <h2>3-Day Outlook</h2>
+                  <p>Daily temperature forecast</p>
+                </div>
+              </div>
+
               <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                {(weather.daily?.time || []).slice(0, 3).map((day, i) => {
-                  const tMin = weather.daily.temperature_2m_min?.[i];
-                  const tMax = weather.daily.temperature_2m_max?.[i];
-                  const isHot = tMax > 35;
+                {(weather.daily_forecast || []).slice(0, 3).map((day, index) => {
+                  const tMin = day.temp_min;
+                  const tMax = day.temp_max;
+                  const isHot = Number(tMax) > 35;
+
                   return (
-                    <div key={day} style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                      padding: "0.75rem", borderRadius: "10px",
-                      background: isHot ? "#fff5f5" : "var(--bg-main)",
-                      border: `1px solid ${isHot ? "#fed7d7" : "var(--border-color)"}`,
-                    }}>
-                      <strong style={{ fontSize: "0.9rem" }}>{new Date(day).toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" })}</strong>
-                      <div style={{ display: "flex", gap: "1rem", fontSize: "0.85rem" }}>
-                        <span style={{ color: "#4299e1" }}>Min: <strong>{tMin}°C</strong></span>
-                        <span style={{ color: isHot ? "#e53e3e" : "#ed8936" }}>Max: <strong>{tMax}°C</strong></span>
+                    <div
+                      key={day.date || index}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "1rem",
+                        padding: "0.75rem",
+                        borderRadius: "10px",
+                        background: isHot ? "#fff5f5" : "var(--bg-main)",
+                        border: `1px solid ${
+                          isHot ? "#fed7d7" : "var(--border-color)"
+                        }`,
+                      }}
+                    >
+                      <strong style={{ fontSize: "0.9rem" }}>
+                        {formatDay(day.date)}
+                      </strong>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "1rem",
+                          fontSize: "0.85rem",
+                        }}
+                      >
+                        <span style={{ color: "#4299e1" }}>
+                          Min: <strong>{tMin ?? "N/A"}°C</strong>
+                        </span>
+
+                        <span style={{ color: isHot ? "#e53e3e" : "#ed8936" }}>
+                          Max: <strong>{tMax ?? "N/A"}°C</strong>
+                        </span>
                       </div>
-                      {isHot && <span style={{ fontSize: "0.72rem", color: "#e53e3e", fontWeight: 700 }}>⚠️ High temp</span>}
+
+                      <span
+                        style={{
+                          fontSize: "0.72rem",
+                          color: isHot ? "#e53e3e" : "var(--text-secondary)",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {isHot ? "⚠️ High temp" : day.condition}
+                      </span>
                     </div>
                   );
                 })}

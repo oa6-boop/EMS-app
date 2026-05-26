@@ -1,5 +1,15 @@
 services:
 
+  modbus-sim:
+    build: ./simulator
+    container_name: modbus-sim
+    command: python server.py
+    ports:
+      - "1502:1502"
+    networks:
+      - iot-net
+    restart: unless-stopped
+
   mqtt-broker:
     image: eclipse-mosquitto:2
     container_name: mqtt-broker
@@ -11,14 +21,20 @@ services:
       - iot-net
     restart: unless-stopped
 
-  modbus-sim:
-    build: ./simulator
-    container_name: modbus-sim
-    command: python server.py
+  nodered:
+    image: nodered/node-red
+    container_name: nodered
     ports:
-      - "1502:1502"
+      - "1880:1880"
+    volumes:
+      - ./node-red-data:/data
+    environment:
+      - NODE_RED_ENABLE_PROJECTS=false
     networks:
       - iot-net
+    depends_on:
+      - modbus-sim
+      - mqtt-broker
     restart: unless-stopped
 
   kafka:
@@ -35,62 +51,127 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092,INTERNAL://kafka:29092"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:29092,INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:29092,INTERNAL://kafka:9092"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       CLUSTER_ID: "0XqLIVmMSfOdA3_zVu5Z9Q"
     volumes:
       - kafka_data:/var/lib/kafka/data
     networks:
       - iot-net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - iot-net
+    command: >
+      bash -c "
+        echo 'Creating Kafka topics...' &&
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ems.meters.1 --partitions 1 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ems.alerts --partitions 1 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:9092 --list &&
+        echo 'Kafka topics ready.'
+      "
+    restart: "no"
 
   bridge:
     build: ./bridge
     container_name: bridge
     depends_on:
-      - mqtt-broker
-      - kafka
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      mqtt-broker:
+        condition: service_started
     environment:
       MQTT_BROKER: "mqtt://mqtt-broker:1883"
-      KAFKA_BROKER: "kafka:29092"
+      KAFKA_BROKER: "kafka:9092"
     networks:
       - iot-net
     restart: unless-stopped
 
-  nodered:
-    image: nodered/node-red
-    container_name: nodered
+  flink-jobmanager:
+    build: ./flink-jobs
+    container_name: flink-jobmanager
+    command: jobmanager
     ports:
-      - "1880:1880"
+      - "8081:8081"
+    environment:
+      KAFKA_BROKER: "kafka:9092"
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
     volumes:
-      - ./node-red-data:/data
+      - ./flink-jobs:/opt/flink/jobs
     networks:
       - iot-net
-    depends_on:
-      - modbus-sim
-      - mqtt-broker
     restart: unless-stopped
 
-  modbus-publisher:
-    build: ./modbus-publisher
-    container_name: modbus-publisher
+  flink-taskmanager:
+    build: ./flink-jobs
+    container_name: flink-taskmanager
+    command: taskmanager
     depends_on:
-      - modbus-sim
-      - mqtt-broker
+      - flink-jobmanager
     environment:
-      MODBUS_HOST: modbus-sim
-      MODBUS_PORT: "1502"
-      MQTT_URL: "mqtt://mqtt-broker:1883"
-      INTERVAL_MS: "5000"
-      PLANT_NAME: "Plant 1"
+      KAFKA_BROKER: "kafka:9092"
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+    volumes:
+      - ./flink-jobs:/opt/flink/jobs
     networks:
       - iot-net
     restart: unless-stopped
+
+  flink-job-submitter:
+    build: ./flink-jobs
+    container_name: flink-job-submitter
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      flink-jobmanager:
+        condition: service_started
+      flink-taskmanager:
+        condition: service_started
+    environment:
+      KAFKA_BROKER: "kafka:9092"
+    volumes:
+      - ./flink-jobs:/opt/flink/jobs
+    command: >
+      bash -c "
+        echo '=== Flink Job Submitter ===' &&
+        echo 'Waiting 30s for Flink JobManager...' &&
+        sleep 30 &&
+        until curl -sf http://flink-jobmanager:8081/overview > /dev/null 2>&1; do
+          echo 'JobManager not ready yet, retrying in 5s...' && sleep 5;
+        done &&
+        echo 'JobManager ready. Submitting threshold_alerts.py...' &&
+        flink run -m flink-jobmanager:8081 -py /opt/flink/jobs/threshold_alerts.py &&
+        echo '=== Job submitted successfully ===' &&
+        tail -f /dev/null
+      "
+    networks:
+      - iot-net
+    restart: "no"
 
   postgres:
     image: postgres:15-alpine
@@ -98,8 +179,8 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB:       ems_db
-      POSTGRES_USER:     ems_user
+      POSTGRES_DB: ems_db
+      POSTGRES_USER: ems_user
       POSTGRES_PASSWORD: ems_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -118,10 +199,12 @@ services:
     ports:
       - "5050:80"
     environment:
-      PGADMIN_DEFAULT_EMAIL:    admin@jesagroup.com
+      PGADMIN_DEFAULT_EMAIL: admin@jesagroup.com
       PGADMIN_DEFAULT_PASSWORD: admin123
     networks:
       - iot-net
+    depends_on:
+      - postgres
     restart: unless-stopped
 
   ems-backend:
@@ -131,11 +214,18 @@ services:
       - "8000:8000"
     env_file:
       - ../ems-backend/.env.docker
+    environment:
+      KAFKA_BROKER: "kafka:9092"
+      KAFKA_ALERT_TOPIC: "ems.alerts"
     depends_on:
       postgres:
         condition: service_healthy
       mqtt-broker:
         condition: service_started
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     networks:
       - iot-net
     restart: unless-stopped

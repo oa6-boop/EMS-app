@@ -292,49 +292,7 @@ export default function UsersManagement({ users, onCreateUser, onDeleteUser, onU
         </div>
       </section>
 
-      {/* Description des rôles */}
-      <section className="section-block">
-        <div className="section-title-wrap"><h2>Role Descriptions</h2></div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
-          {[
-            {
-              ...ROLE_CONFIG.management,
-              pages: ["Dashboard", "Industry Overview", "Carbon Emissions", "Forecasting", "Reports & Analytics", "Energy Prices", "Weather", "Messages", "Profile"],
-            },
-            {
-              ...ROLE_CONFIG.maintenance,
-              pages: ["Real-Time Monitoring", "Equipment Status", "Power Quality", "Alarms & Events", "Historical Data", "Alarm Thresholds", "Maintenance", "Weather", "Messages", "Profile"],
-            },
-            {
-              ...ROLE_CONFIG.admin,
-              pages: ["All pages", "Users Management", "Urgent Messages", "Audit Logs"],
-            },
-          ].map(role => (
-            <div key={role.label} style={{
-              background: role.bg, border: `1px solid ${role.border}`,
-              borderRadius: "14px", padding: "1.25rem",
-              borderLeft: `4px solid ${role.color}`,
-            }}>
-              <div style={{ fontWeight: 800, fontSize: "1rem", color: role.color, marginBottom: "0.5rem" }}>
-                {role.icon} {role.label}
-              </div>
-              <div style={{ fontSize: "0.78rem", color: role.color, fontWeight: 600, marginBottom: "0.75rem" }}>{role.desc}</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                {role.pages.map(page => (
-                  <span key={page} style={{
-                    background: "rgba(255,255,255,0.7)", color: role.color,
-                    border: `1px solid ${role.color}44`,
-                    borderRadius: "6px", padding: "2px 8px",
-                    fontSize: "0.7rem", fontWeight: 600,
-                  }}>
-                    {page}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+     
 
       {/* Admins */}
       <section className="section-block">

@@ -58,7 +58,6 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       CLUSTER_ID: "0XqLIVmMSfOdA3_zVu5Z9Q"
     volumes:
       - kafka_data:/var/lib/kafka/data
@@ -71,32 +70,12 @@ services:
       timeout: 5s
       retries: 10
 
-  kafka-init:
-    image: confluentinc/cp-kafka:7.6.0
-    container_name: kafka-init
-    depends_on:
-      kafka:
-        condition: service_healthy
-    networks:
-      - iot-net
-    command: >
-      bash -c "
-        echo 'Creating Kafka topics...' &&
-        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ems.meters.1 --partitions 1 --replication-factor 1 &&
-        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ems.alerts --partitions 1 --replication-factor 1 &&
-        kafka-topics --bootstrap-server kafka:9092 --list &&
-        echo 'Kafka topics ready.'
-      "
-    restart: "no"
-
   bridge:
     build: ./bridge
     container_name: bridge
     depends_on:
       kafka:
         condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
       mqtt-broker:
         condition: service_started
     environment:
@@ -106,6 +85,7 @@ services:
       - iot-net
     restart: unless-stopped
 
+  # ── Flink JobManager (image custom avec PyFlink) ──────────────────────────
   flink-jobmanager:
     build: ./flink-jobs
     container_name: flink-jobmanager
@@ -114,15 +94,25 @@ services:
       - "8081:8081"
     environment:
       KAFKA_BROKER: "kafka:9092"
+      VOLTAGE_MIN: "210.0"
+      VOLTAGE_MAX: "250.0"
+      FREQUENCY_MIN: "49.5"
+      FREQUENCY_MAX: "50.5"
+      POWER_FACTOR_MIN: "0.80"
+      THD_MAX: "8.0"
+      HIGH_CONSUMPTION_KW: "20.0"
+      SUSTAINED_MS: "0"
+      PRODUCTION_UNITS: "10.0"
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 4
+        taskmanager.numberOfTaskSlots: 6
     volumes:
       - ./flink-jobs:/opt/flink/jobs
     networks:
       - iot-net
     restart: unless-stopped
 
+  # ── Flink TaskManager (image custom avec PyFlink) ─────────────────────────
   flink-taskmanager:
     build: ./flink-jobs
     container_name: flink-taskmanager
@@ -133,27 +123,35 @@ services:
       KAFKA_BROKER: "kafka:9092"
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 4
+        taskmanager.numberOfTaskSlots: 6
     volumes:
       - ./flink-jobs:/opt/flink/jobs
     networks:
       - iot-net
     restart: unless-stopped
 
+  # ── Flink Job Submitter : soumet les 3 jobs automatiquement ───────────────
   flink-job-submitter:
     build: ./flink-jobs
     container_name: flink-job-submitter
     depends_on:
       kafka:
         condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
       flink-jobmanager:
         condition: service_started
       flink-taskmanager:
         condition: service_started
     environment:
       KAFKA_BROKER: "kafka:9092"
+      VOLTAGE_MIN: "210.0"
+      VOLTAGE_MAX: "250.0"
+      FREQUENCY_MIN: "49.5"
+      FREQUENCY_MAX: "50.5"
+      POWER_FACTOR_MIN: "0.80"
+      THD_MAX: "8.0"
+      HIGH_CONSUMPTION_KW: "20.0"
+      SUSTAINED_MS: "0"
+      PRODUCTION_UNITS: "10.0"
     volumes:
       - ./flink-jobs:/opt/flink/jobs
     command: >
@@ -162,11 +160,15 @@ services:
         echo 'Waiting 30s for Flink JobManager...' &&
         sleep 30 &&
         until curl -sf http://flink-jobmanager:8081/overview > /dev/null 2>&1; do
-          echo 'JobManager not ready yet, retrying in 5s...' && sleep 5;
+          echo 'JobManager not ready, retry in 5s...' && sleep 5;
         done &&
-        echo 'JobManager ready. Submitting threshold_alerts.py...' &&
-        flink run -m flink-jobmanager:8081 -py /opt/flink/jobs/threshold_alerts.py &&
-        echo '=== Job submitted successfully ===' &&
+        echo 'Submitting threshold_alerts.py...' &&
+        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/threshold_alerts.py &&
+        echo 'Submitting energy_processor.py...' &&
+        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/energy_processor.py &&
+        echo 'Submitting peak_demand_processor.py...' &&
+        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/peak_demand_processor.py &&
+        echo '=== All 3 jobs submitted successfully ===' &&
         tail -f /dev/null
       "
     networks:
@@ -217,6 +219,7 @@ services:
     environment:
       KAFKA_BROKER: "kafka:9092"
       KAFKA_ALERT_TOPIC: "ems.alerts"
+      KAFKA_METRICS_TOPICS: "ems.metrics,ems.processed"
     depends_on:
       postgres:
         condition: service_healthy
@@ -224,8 +227,6 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
     networks:
       - iot-net
     restart: unless-stopped

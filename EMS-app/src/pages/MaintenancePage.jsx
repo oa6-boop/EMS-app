@@ -7,15 +7,11 @@ import {
 } from "../api/maintenanceApi";
 
 const MAINTENANCE_TYPES = [
-  "Inspection visuelle",
-  "Calibration compteur",
-  "Nettoyage contacts",
-  "Remplacement fusibles",
-  "Test isolation",
-  "Vérification câblage",
-  "Mise à jour firmware",
-  "Remplacement batterie",
-  "Test fonctionnel complet",
+  "Predictive",
+  "Curative",
+  "Corrective",
+  "Conditional",
+ 
 ];
 
 const STATUS_COLORS = {

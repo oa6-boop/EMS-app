@@ -28,6 +28,8 @@ const ROLE_PAGES = {
     { key: "thresholds",  label: "Alarm Thresholds",     icon: SlidersHorizontal },
     { key: "urgent",      label: "Urgent Messages",      icon: BellRing,       badge: "urgent" },
     { key: "audit",       label: "Audit Logs",           icon: ClipboardList   },
+        { key: "sld",         label: "SLD Monitoring",          icon: Activity    },
+
   ],
   management: [
     { key: "dashboard",   label: "Dashboard Overview",   icon: BarChart3       },
@@ -52,12 +54,21 @@ const ROLE_PAGES = {
     { key: "messages",    label: "Messages",             icon: MessagesSquare, badge: "message" },
     { key: "profile",     label: "My Profile",           icon: UserCircle2     },
   ],
+  operator: [
+    { key: "dashboard",   label: "Dashboard Overview",   icon: BarChart3   },
+    { key: "equipment",   label: "Equipment Status",     icon: Settings    },
+    { key: "sld",         label: "SLD Monitoring",          icon: Activity    },
+    { key: "weather",     label: "Weather",              icon: CloudSun    },
+    { key: "messages",    label: "Messages",             icon: MessagesSquare, badge: "message" },
+    { key: "profile",     label: "My Profile",           icon: UserCircle2 },
+  ],
 };
 
 const ROLE_BADGE = {
   admin:       { label: "Admin",       color: "#7c3aed", bg: "#f3e8ff" },
   management:  { label: "Management",  color: "#2563eb", bg: "#eff6ff" },
   maintenance: { label: "Maintenance", color: "#d97706", bg: "#fffbeb" },
+  operator:    { label: "Operator",    color: "#0891b2", bg: "#ecfeff" },
 };
 
 export default function Sidebar({

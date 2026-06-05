@@ -8,8 +8,7 @@ from app.models import AuditLog, User
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
-VALID_ROLES = ["admin", "management", "maintenance"]
-
+VALID_ROLES = ["admin", "management", "maintenance", "operator"]
 
 def user_to_dict(u: User) -> dict:
     return {

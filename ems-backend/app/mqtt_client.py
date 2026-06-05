@@ -112,27 +112,40 @@ def get_meter_id(topic: str = "", raw: dict | None = None) -> int:
         return 1
 
 
+# ── HIERARCHIE : Plant → Line → Zone → Equipment ──────────────────────────────
+# Les noms reels viennent de la DataPlatform si elle les envoie (priorite dans
+# extract_topology / alarm_topology). Sinon, fallback calcule ci-dessous, qui
+# s'etend automatiquement quand de nouveaux meters arrivent.
+#
+# Layout (2 meters/zone, 2 zones/line, 2 lines/plant) :
+#   Plant 1 ─ Line 1 ─ Zone A (PM-001, PM-002)
+#                    └ Zone B (PM-003, PM-004)
+#           └ Line 2 ─ Zone C (PM-005, PM-006)
+#                    └ Zone D (PM-007, PM-008)
+#   Plant 2 ─ Line 3 ─ Zone E (PM-009, PM-010) ... etc, automatiquement.
+METERS_PER_ZONE = 2
+ZONES_PER_LINE = 2
+LINES_PER_PLANT = 2
+_ZONE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def get_plant(meter_id: int) -> str:
+    meters_per_plant = METERS_PER_ZONE * ZONES_PER_LINE * LINES_PER_PLANT
+    return f"Plant {((meter_id - 1) // meters_per_plant) + 1}"
+
+
 def get_line(meter_id: int) -> str:
-    return f"Production Line {((meter_id - 1) // 2) + 1}"
+    meters_per_line = METERS_PER_ZONE * ZONES_PER_LINE
+    return f"Production Line {((meter_id - 1) // meters_per_line) + 1}"
 
 
 def get_area(meter_id: int) -> str:
-    areas = [
-        "Zone A",
-        "Zone B",
-        "Zone C",
-        "Zone D",
-        "Zone E",
-        "Zone F",
-        "Zone G",
-        "Zone H",
-    ]
-
-    return areas[((meter_id - 1) // 2) % len(areas)]
+    zone_index = (meter_id - 1) // METERS_PER_ZONE
+    return f"Zone {_ZONE_LETTERS[zone_index % len(_ZONE_LETTERS)]}"
 
 
 def get_unit_name(meter_id: int) -> str:
-    return f"Unit-{((meter_id - 1) // 2) + 1}"
+    return f"Unit-{((meter_id - 1) // METERS_PER_ZONE) + 1}"
 
 
 def get_ws_manager():
@@ -231,7 +244,7 @@ def extract_topology(topic: str, raw: dict) -> dict:
         "plant": raw.get("plant")
         or raw.get("plant_name")
         or raw.get("site")
-        or "Plant 1",
+        or get_plant(meter_id),
 
         "unit_name": raw.get("unit_name")
         or raw.get("unit")
@@ -472,7 +485,7 @@ def alarm_topology(alarm: dict) -> dict:
 
         "plant": alarm.get("plant")
         or alarm.get("plant_name")
-        or "Plant 1",
+        or get_plant(meter_id),
 
         "unit_name": alarm.get("unit_name")
         or alarm.get("unit")

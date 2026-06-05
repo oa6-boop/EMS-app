@@ -23,10 +23,8 @@ import MaintenancePage from "./pages/MaintenancePage";
 import ChatbotWidget from "./components/ChatbotWidget";
 import { useWebSocket } from "./hooks/useWebSocket";
 import EnergyPriceAnalysis from "./pages/EnergyPriceAnalysis";
-
 import {
   fetchLatestTelemetry,
-  fetchStructure,
   fetchPowerQualityHistory,
   fetchCarbonHistory,
 } from "./api/emsApi";
@@ -51,48 +49,20 @@ import { fetchLatestMessageNotifications } from "./api/chatApi";
 
 const PAGES_BY_ROLE = {
   admin: [
-    "dashboard",
-    "industry",
-    "realtime",
-    "equipment",
-    "power",
-    "carbon",
-    "forecasting",
-    "reports",
-    "alarms",
-    "history",
-    "maintenance",
-    "prices",
-    "weather",
-    "messages",
-    "profile",
-    "users",
-    "thresholds",
-    "urgent",
-    "audit",
+    "dashboard", "industry", "realtime", "equipment", "power", "carbon",
+    "forecasting", "reports", "alarms", "history", "maintenance", "prices",
+    "weather", "messages", "profile", "users", "thresholds", "urgent", "audit", "sld",
   ],
   management: [
-    "dashboard",
-    "industry",
-    "carbon",
-    "forecasting",
-    "reports",
-    "prices",
-    "weather",
-    "messages",
-    "profile",
+    "dashboard", "industry", "carbon", "forecasting", "reports", "prices",
+    "weather", "messages", "profile",
   ],
   maintenance: [
-    "realtime",
-    "equipment",
-    "power",
-    "alarms",
-    "history",
-    "thresholds",
-    "maintenance",
-    "weather",
-    "messages",
-    "profile",
+    "realtime", "equipment", "power", "alarms", "history", "thresholds",
+    "maintenance", "weather", "messages", "profile",
+  ],
+  operator: [
+    "dashboard", "equipment", "sld", "weather", "messages", "profile",
   ],
 };
 
@@ -100,38 +70,22 @@ const DEFAULT_PAGE = {
   admin: "dashboard",
   management: "dashboard",
   maintenance: "realtime",
+  operator: "dashboard",
 };
 
 const VALID_PAGES = [
-  "dashboard",
-  "industry",
-  "realtime",
-  "equipment",
-  "power",
-  "carbon",
-  "forecasting",
-  "reports",
-  "alarms",
-  "weather",
-  "profile",
-  "users",
-  "urgent",
-  "audit",
-  "messages",
-  "history",
-  "thresholds",
-  "maintenance",
-  "prices",
+  "dashboard", "industry", "realtime", "equipment", "power", "carbon",
+  "forecasting", "reports", "alarms", "weather", "profile", "users",
+  "urgent", "audit", "messages", "history", "thresholds", "maintenance",
+  "prices", "sld",
 ];
-
-const DEFAULT_LINE = { id: "line-1", label: "Production Line 1" };
 
 function getSavedPage() {
   try {
     const saved = localStorage.getItem("ems_active_page");
     if (saved && VALID_PAGES.includes(saved)) return saved;
   } catch {
-    // ignore localStorage error
+    // ignore
   }
   return "dashboard";
 }
@@ -144,81 +98,34 @@ function isSameValue(a, b) {
   return normalizeValue(a) === normalizeValue(b);
 }
 
-function getUniqueValues(values) {
-  return [
-    ...new Set(
-      values
-        .map((v) => String(v || "").trim())
-        .filter(Boolean)
-    ),
-  ];
-}
-
 function buildEnergyDefaults(name = "") {
   const l = name.toLowerCase();
-
-  if (l.includes("electric") || l.includes("électric")) {
-    return { min: 0, max: 500, step: 10 };
-  }
-
-  if (l.includes("kwh")) {
-    return { min: 0, max: 500, step: 10 };
-  }
-
-  if (l.includes("co2") || l.includes("carbon")) {
-    return { min: 0, max: 200, step: 1 };
-  }
-
-  if (l.includes("eau") || l.includes("water")) {
-    return { min: 0, max: 200, step: 5 };
-  }
-
-  if (l.includes("vapeur") || l.includes("steam")) {
-    return { min: 0, max: 400, step: 10 };
-  }
-
-  if (l.includes("solaire") || l.includes("solar")) {
-    return { min: 0, max: 300, step: 5 };
-  }
-
-  if (l.includes("fuel") || l.includes("carburant")) {
-    return { min: 0, max: 500, step: 10 };
-  }
-
+  if (l.includes("electric") || l.includes("électric")) return { min: 0, max: 500, step: 10 };
+  if (l.includes("kwh")) return { min: 0, max: 500, step: 10 };
+  if (l.includes("co2") || l.includes("carbon")) return { min: 0, max: 200, step: 1 };
+  if (l.includes("eau") || l.includes("water")) return { min: 0, max: 200, step: 5 };
+  if (l.includes("vapeur") || l.includes("steam")) return { min: 0, max: 400, step: 10 };
+  if (l.includes("solaire") || l.includes("solar")) return { min: 0, max: 300, step: 5 };
+  if (l.includes("fuel") || l.includes("carburant")) return { min: 0, max: 500, step: 10 };
   return { min: 0, max: 1000, step: 10 };
 }
 
 function createChart(value, max) {
   const ratio = Math.max(10, Math.min(95, (value / (max || 500)) * 100));
-
   return Array.from({ length: 10 }, (_, i) =>
     Math.max(5, Math.min(100, ratio + ((i % 3) - 1) * 3))
   );
 }
 
-function convertEnergies(lineData = []) {
+function convertEnergies(lineData = [], lineLabel = "") {
   return lineData.map((item, index) => {
     const defaults = buildEnergyDefaults(item.energy_name);
     const value = Number(item.value || 0);
 
-    const plant =
-      item.plant ||
-      item.plant_name ||
-      item.rawData?.plant ||
-      "";
-
-    const zone =
-      item.zone ||
-      item.area ||
-      item.area_name ||
-      item.rawData?.area ||
-      "";
-
-    const equipment =
-      item.equipment ||
-      item.equipment_name ||
-      item.rawData?.equipment ||
-      "";
+    const plant = item.plant || item.plant_name || item.rawData?.plant || "Plant 1";
+    const zone = item.zone || item.area || item.area_name || item.rawData?.area || "Zone A";
+    const equipment = item.equipment || item.equipment_name || item.rawData?.equipment || "Equipment";
+    const line = item.production_line || item.line || lineLabel || "Production Line 1";
 
     return {
       id: item.id || index + 1,
@@ -232,12 +139,11 @@ function convertEnergies(lineData = []) {
       cost: Number(item.cost || 0),
       co2_kg: Number(item.co2_kg || 0),
       timestamp: item.timestamp,
-
       plant,
+      line,
       zone,
       area: zone,
       equipment,
-
       rawData: {
         voltage: item.voltage,
         frequency: item.frequency,
@@ -260,51 +166,44 @@ function buildElectricalData(energies) {
   });
 
   if (!electricEnergies.length) {
-    return {
-      tension: 230,
-      frequence: 50,
-      facteurPuissance: 0.9,
-      thd: 3.2,
-    };
+    return { tension: 230, frequence: 50, facteurPuissance: 0.9, thd: 3.2 };
   }
 
-  const avg = (arr, defaultValue) =>
-    arr.length ? arr.reduce((sum, value) => sum + Number(value || 0), 0) / arr.length : defaultValue;
+  const avg = (arr, def) =>
+    arr.length ? arr.reduce((s, v) => s + Number(v || 0), 0) / arr.length : def;
 
   return {
-    tension: parseFloat(
-      avg(
-        electricEnergies
-          .map((energy) => energy.rawData?.voltage)
-          .filter((value) => value != null),
-        230
-      ).toFixed(1)
-    ),
-    frequence: parseFloat(
-      avg(
-        electricEnergies
-          .map((energy) => energy.rawData?.frequency)
-          .filter((value) => value != null),
-        50
-      ).toFixed(2)
-    ),
-    facteurPuissance: parseFloat(
-      avg(
-        electricEnergies
-          .map((energy) => energy.rawData?.power_factor)
-          .filter((value) => value != null),
-        0.9
-      ).toFixed(3)
-    ),
-    thd: parseFloat(
-      avg(
-        electricEnergies
-          .map((energy) => energy.rawData?.thd)
-          .filter((value) => value != null),
-        3.2
-      ).toFixed(2)
-    ),
+    tension: parseFloat(avg(electricEnergies.map((e) => e.rawData?.voltage).filter((v) => v != null), 230).toFixed(1)),
+    frequence: parseFloat(avg(electricEnergies.map((e) => e.rawData?.frequency).filter((v) => v != null), 50).toFixed(2)),
+    facteurPuissance: parseFloat(avg(electricEnergies.map((e) => e.rawData?.power_factor).filter((v) => v != null), 0.9).toFixed(3)),
+    thd: parseFloat(avg(electricEnergies.map((e) => e.rawData?.thd).filter((v) => v != null), 3.2).toFixed(2)),
   };
+}
+
+// ── Construit l'arbre Plant → Line → Zone → Equipment depuis les données ──────
+function buildStructure(energies) {
+  const tree = {};
+  energies.forEach((e) => {
+    const plant = e.plant || "Plant 1";
+    const line = e.line || "Production Line 1";
+    const zone = e.zone || e.area || "Zone A";
+    const equipment = e.equipment || "Equipment";
+    tree[plant] = tree[plant] || {};
+    tree[plant][line] = tree[plant][line] || {};
+    tree[plant][line][zone] = tree[plant][line][zone] || new Set();
+    tree[plant][line][zone].add(equipment);
+  });
+
+  return Object.keys(tree).sort().map((plant) => ({
+    plant,
+    lines: Object.keys(tree[plant]).sort().map((line) => ({
+      line,
+      zones: Object.keys(tree[plant][line]).sort().map((zone) => ({
+        zone,
+        equipment: [...tree[plant][line][zone]].sort(),
+      })),
+    })),
+  }));
 }
 
 function App() {
@@ -312,9 +211,8 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toastMessage, setToastMessage] = useState("");
 
-  const [selectedLine, setSelectedLine] = useState("line-1");
-  const [selectedZone, setSelectedZone] = useState("all");
-  const [selectedPlant, setSelectedPlant] = useState("all");
+  // Filtre hiérarchique plant-first
+  const [selection, setSelection] = useState({ plant: "", line: "", zone: "" });
   const [selectedEnergyNames, setSelectedEnergyNames] = useState([]);
 
   const [backendSummary, setBackendSummary] = useState({});
@@ -332,19 +230,12 @@ function App() {
   const [powerQualityHistory, setPowerQualityHistory] = useState([]);
   const [carbonHistory, setCarbonHistory] = useState([]);
 
-  const [discoveredLines, setDiscoveredLines] = useState([]);
-  const [discoveredZones, setDiscoveredZones] = useState([]);
-  const [discoveredPlants, setDiscoveredPlants] = useState([]);
-
   const lastSeenRef = useRef(new Set());
   const lastUrgentRef = useRef(0);
   const initializedRef = useRef(false);
 
   const setActivePage = useCallback((page) => {
-    if (VALID_PAGES.includes(page)) {
-      localStorage.setItem("ems_active_page", page);
-    }
-
+    if (VALID_PAGES.includes(page)) localStorage.setItem("ems_active_page", page);
     setActivePageState(page);
   }, []);
 
@@ -361,198 +252,138 @@ function App() {
 
   const { connected: wsConnected } = useWebSocket(handleWsMessage);
 
-  const lineOptions = useMemo(() => {
-    if (!discoveredLines.length) return [DEFAULT_LINE];
-
-    return discoveredLines.map((label, index) => ({
-      id: `line-${index + 1}`,
-      label,
-    }));
-  }, [discoveredLines]);
-
-  const currentLine = useMemo(() => {
-    return lineOptions.find((line) => line.id === selectedLine) || lineOptions[0] || DEFAULT_LINE;
-  }, [lineOptions, selectedLine]);
-
-  useEffect(() => {
-    if (!lineOptions.length) return;
-
-    const exists = lineOptions.some((line) => line.id === selectedLine);
-
-    if (!exists) {
-      setSelectedLine(lineOptions[0].id);
-      setSelectedPlant("all");
-      setSelectedZone("all");
-      setSelectedEnergyNames([]);
-    }
-  }, [lineOptions, selectedLine]);
-
-  const handleLineChange = useCallback((lineId) => {
-    setSelectedLine(lineId);
-    setSelectedPlant("all");
-    setSelectedZone("all");
-    setSelectedEnergyNames([]);
-  }, []);
-
-  useEffect(() => {
-    const discover = async () => {
-      try {
-        const structure = await fetchStructure();
-
-        if (structure.lines?.length > 0) {
-          setDiscoveredLines(structure.lines);
-        }
-
-        if (structure.areas?.length > 0) {
-          setDiscoveredZones(structure.areas);
-        }
-
-        if (structure.plants?.length > 0) {
-          setDiscoveredPlants(structure.plants);
-        }
-      } catch {
-        // ignore discovery error
-      }
-    };
-
-    discover();
-
-    const intervalId = setInterval(discover, 30000);
-
-    return () => clearInterval(intervalId);
-  }, []);
-
+  // Polling télémétrie
   useEffect(() => {
     const load = async () => {
       try {
         const response = await fetchLatestTelemetry();
-
         setBackendSummary(response || {});
         setBackendError("");
-
-        const lines = Object.keys(response || {});
-
-        if (lines.length && !discoveredLines.length) {
-          setDiscoveredLines(lines.sort());
-        }
       } catch {
         setBackendError("Backend not reachable — is ems-backend running?");
       } finally {
         setLoadingData(false);
       }
     };
-
     load();
-
     const intervalId = setInterval(load, 5000);
-
     return () => clearInterval(intervalId);
-  }, [discoveredLines.length]);
+  }, []);
 
+  // ── Toutes les énergies (toutes lignes confondues) ──────────────────────────
+  const allEnergies = useMemo(() => {
+    const out = [];
+    Object.entries(backendSummary).forEach(([lineLabel, lineData]) => {
+      const energies = convertEnergies(lineData?.energies || [], lineLabel);
+      energies.forEach((e) => out.push(e));
+    });
+    return out;
+  }, [backendSummary]);
+
+  // ── Arbre hiérarchique auto-découvert ───────────────────────────────────────
+  const structure = useMemo(() => buildStructure(allEnergies), [allEnergies]);
+
+  // Réinitialiser une sélection devenue invalide
+  useEffect(() => {
+    if (selection.plant && !structure.some((p) => isSameValue(p.plant, selection.plant))) {
+      setSelection({ plant: "", line: "", zone: "" });
+    }
+  }, [structure, selection.plant]);
+
+  // ── Ligne active (pour pages qui ont besoin d'un label de ligne) ────────────
+  const activeLineLabel = useMemo(() => {
+    if (selection.line) return selection.line;
+    const firstPlant = selection.plant
+      ? structure.find((p) => isSameValue(p.plant, selection.plant))
+      : structure[0];
+    return firstPlant?.lines?.[0]?.line || "Production Line 1";
+  }, [selection, structure]);
+
+  // Historiques (par ligne active)
   useEffect(() => {
     const load = async () => {
       try {
-        const response = await fetchPowerQualityHistory(currentLine.label, 48);
+        const response = await fetchPowerQualityHistory(activeLineLabel, 48);
         setPowerQualityHistory(response || []);
       } catch {
-        // ignore history error
+        // ignore
       }
     };
-
     load();
-
     const intervalId = setInterval(load, 10000);
-
     return () => clearInterval(intervalId);
-  }, [currentLine.label]);
+  }, [activeLineLabel]);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const response = await fetchCarbonHistory(currentLine.label, 48);
+        const response = await fetchCarbonHistory(activeLineLabel, 48);
         setCarbonHistory(response || []);
       } catch {
-        // ignore carbon history error
+        // ignore
       }
     };
-
     load();
-
     const intervalId = setInterval(load, 10000);
-
     return () => clearInterval(intervalId);
-  }, [currentLine.label]);
+  }, [activeLineLabel]);
 
+  // Users
   useEffect(() => {
     const load = async () => {
       try {
         const token = localStorage.getItem("token");
-
         if (!token || user?.role !== "admin") return;
-
         const response = await fetchUsers(token);
-
-        setUsers(
-          response.map((item) => ({
-            id: item.id,
-            firstName: item.first_name || item.firstName,
-            lastName: item.last_name || item.lastName,
-            email: item.email,
-            password: "",
-            role: item.role,
-            profileImage: item.profile_image || "",
-          }))
-        );
+        setUsers(response.map((item) => ({
+          id: item.id,
+          firstName: item.first_name || item.firstName,
+          lastName: item.last_name || item.lastName,
+          email: item.email,
+          password: "",
+          role: item.role,
+          profileImage: item.profile_image || "",
+        })));
       } catch {
-        // ignore user loading error
+        // ignore
       }
     };
-
     load();
   }, [isLoggedIn, user?.role]);
 
+  // Urgent messages
   useEffect(() => {
     const load = async () => {
       try {
         const token = localStorage.getItem("token");
-
         if (!token || user?.role !== "admin") return;
-
         const [messages, countResponse] = await Promise.all([
           fetchUrgentMessages(token),
           fetchUrgentMessagesCount(token),
         ]);
-
         const pendingCount = countResponse.pendingCount || 0;
-
         if (initializedRef.current && pendingCount > lastUrgentRef.current) {
           setToastMessage(`New urgent request (${pendingCount} pending)`);
         }
-
         lastUrgentRef.current = pendingCount;
         setUrgentMessages(messages || []);
         setUrgentCount(pendingCount);
       } catch {
-        // ignore urgent messages error
+        // ignore
       }
     };
-
     load();
-
     const intervalId = setInterval(load, 5000);
-
     return () => clearInterval(intervalId);
   }, [isLoggedIn, user?.role]);
 
+  // Restore session
   useEffect(() => {
     const restore = async () => {
       const token = localStorage.getItem("token");
-
       if (!token) return;
-
       try {
         const currentUser = await getCurrentUser(token);
-
         setUser({
           id: currentUser.id,
           firstName: currentUser.firstName,
@@ -561,188 +392,84 @@ function App() {
           role: currentUser.role,
           profileImage: currentUser.profileImage || "",
         });
-
         setIsLoggedIn(true);
       } catch {
         localStorage.removeItem("token");
       }
     };
-
     restore();
   }, []);
 
+  // Notifications messages
   useEffect(() => {
     if (!isLoggedIn || !user) return;
-
     const poll = async () => {
       try {
         const token = localStorage.getItem("token");
-
         if (!token) return;
-
         const results = await fetchLatestMessageNotifications(token);
-
         let unseen = 0;
         let toast = "";
-
         results.forEach((item) => {
           const lastMessage = item.lastMessage;
-
           if (!lastMessage) return;
-
           const messageId = String(lastMessage.id);
           const isOwnMessage = lastMessage.sender_id === user?.id;
-
           if (!initializedRef.current) {
             lastSeenRef.current.add(messageId);
             return;
           }
-
           if (!lastSeenRef.current.has(messageId) && !isOwnMessage) {
             unseen += 1;
             lastSeenRef.current.add(messageId);
             toast = `New message: ${lastMessage.sender_name}`;
           }
         });
-
         if (unseen > 0) {
-          setMessageNotifCount((previous) => previous + unseen);
+          setMessageNotifCount((p) => p + unseen);
           setToastMessage(toast || "New message received");
         }
-
-        if (!initializedRef.current) {
-          initializedRef.current = true;
-        }
+        if (!initializedRef.current) initializedRef.current = true;
       } catch {
-        // ignore notifications error
+        // ignore
       }
     };
-
     initializedRef.current = false;
-
     poll();
-
     const intervalId = setInterval(poll, 4000);
-
     return () => clearInterval(intervalId);
   }, [isLoggedIn, user?.id, user]);
 
   useEffect(() => {
-    if (activePage === "messages") {
-      setMessageNotifCount(0);
-    }
+    if (activePage === "messages") setMessageNotifCount(0);
   }, [activePage]);
 
   useEffect(() => {
     if (!toastMessage) return;
-
     const timeoutId = setTimeout(() => setToastMessage(""), 3500);
-
     return () => clearTimeout(timeoutId);
   }, [toastMessage]);
 
-  const currentLineRaw = useMemo(() => {
-    return backendSummary[currentLine.label]?.energies || [];
-  }, [backendSummary, currentLine.label]);
-
-  const lineTotalCost = useMemo(() => {
-    return backendSummary[currentLine.label]?.total_cost || 0;
-  }, [backendSummary, currentLine.label]);
-
-  const linePeakKw = useMemo(() => {
-    return backendSummary[currentLine.label]?.peak_kw || 0;
-  }, [backendSummary, currentLine.label]);
-
-  const lineTotalCo2 = useMemo(() => {
-    return backendSummary[currentLine.label]?.total_co2_kg || 0;
-  }, [backendSummary, currentLine.label]);
-
-  const lineAvgVoltage = useMemo(() => {
-    return backendSummary[currentLine.label]?.avg_voltage ?? null;
-  }, [backendSummary, currentLine.label]);
-
-  const lineAvgPowerFactor = useMemo(() => {
-    return backendSummary[currentLine.label]?.avg_power_factor ?? null;
-  }, [backendSummary, currentLine.label]);
-
-  const allEnergies = useMemo(() => {
-    return convertEnergies(currentLineRaw);
-  }, [currentLineRaw]);
-
-  const plantOptionsForSelectedLine = useMemo(() => {
-    const plantsFromData = getUniqueValues(allEnergies.map((energy) => energy.plant));
-
-    if (plantsFromData.length > 0) {
-      return plantsFromData;
-    }
-
-    return getUniqueValues(discoveredPlants);
-  }, [allEnergies, discoveredPlants]);
-
-  const zoneOptionsForSelectedLine = useMemo(() => {
-    const zonesFromData = getUniqueValues(
-      allEnergies.map((energy) => energy.zone || energy.area || energy.rawData?.area)
-    );
-
-    if (zonesFromData.length > 0) {
-      return zonesFromData;
-    }
-
-    return getUniqueValues(discoveredZones);
-  }, [allEnergies, discoveredZones]);
-
-  useEffect(() => {
-    if (
-      selectedPlant !== "all" &&
-      plantOptionsForSelectedLine.length > 0 &&
-      !plantOptionsForSelectedLine.some((plant) => isSameValue(plant, selectedPlant))
-    ) {
-      setSelectedPlant("all");
-    }
-  }, [selectedPlant, plantOptionsForSelectedLine]);
-
-  useEffect(() => {
-    if (
-      selectedZone !== "all" &&
-      zoneOptionsForSelectedLine.length > 0 &&
-      !zoneOptionsForSelectedLine.some((zone) => isSameValue(zone, selectedZone))
-    ) {
-      setSelectedZone("all");
-    }
-  }, [selectedZone, zoneOptionsForSelectedLine]);
-
-  const locationFilteredEnergies = useMemo(() => {
-    return allEnergies.filter((energy) => {
-      const energyPlant = energy.plant || energy.rawData?.plant || "";
-      const energyZone = energy.zone || energy.area || energy.rawData?.area || "";
-
-      const matchesPlant =
-        selectedPlant === "all" || isSameValue(energyPlant, selectedPlant);
-
-      const matchesZone =
-        selectedZone === "all" || isSameValue(energyZone, selectedZone);
-
-      return matchesPlant && matchesZone;
+  // ── Filtrage hiérarchique ───────────────────────────────────────────────────
+  const scopedEnergies = useMemo(() => {
+    return allEnergies.filter((e) => {
+      if (selection.plant && !isSameValue(e.plant, selection.plant)) return false;
+      if (selection.line && !isSameValue(e.line, selection.line)) return false;
+      if (selection.zone && !isSameValue(e.zone, selection.zone)) return false;
+      return true;
     });
-  }, [allEnergies, selectedPlant, selectedZone]);
+  }, [allEnergies, selection]);
 
   const availableNames = useMemo(() => {
-    return locationFilteredEnergies.map((energy) => energy.name);
-  }, [locationFilteredEnergies]);
+    return [...new Set(scopedEnergies.map((e) => e.name))];
+  }, [scopedEnergies]);
 
   const visibleEnergies = useMemo(() => {
-    if (!selectedEnergyNames.length) {
-      return locationFilteredEnergies;
-    }
+    if (!selectedEnergyNames.length) return scopedEnergies;
+    return scopedEnergies.filter((e) => selectedEnergyNames.includes(e.name));
+  }, [scopedEnergies, selectedEnergyNames]);
 
-    return locationFilteredEnergies.filter((energy) =>
-      selectedEnergyNames.includes(energy.name)
-    );
-  }, [locationFilteredEnergies, selectedEnergyNames]);
-
-  const visibleData = useMemo(() => {
-    return buildElectricalData(visibleEnergies);
-  }, [visibleEnergies]);
+  const visibleData = useMemo(() => buildElectricalData(visibleEnergies), [visibleEnergies]);
 
   useEffect(() => {
     setSelectedEnergyNames((previous) =>
@@ -750,70 +477,37 @@ function App() {
     );
   }, [availableNames]);
 
-  const hasSubFilter =
-    selectedPlant !== "all" ||
-    selectedZone !== "all" ||
-    selectedEnergyNames.length > 0;
-
+  // ── KPIs calculés depuis les données filtrées (100% DataPlatform) ───────────
   const displayedTotalCost = useMemo(() => {
-    if (!hasSubFilter) return lineTotalCost;
-
-    const total = visibleEnergies.reduce(
-      (sum, energy) => sum + Number(energy.cost || 0),
-      0
-    );
-
-    return total || 0;
-  }, [hasSubFilter, lineTotalCost, visibleEnergies]);
+    return visibleEnergies.reduce((s, e) => s + Number(e.cost || 0), 0);
+  }, [visibleEnergies]);
 
   const displayedTotalCo2 = useMemo(() => {
-    if (!hasSubFilter) return lineTotalCo2;
-
-    const total = visibleEnergies.reduce(
-      (sum, energy) => sum + Number(energy.co2_kg || 0),
-      0
-    );
-
-    return total || 0;
-  }, [hasSubFilter, lineTotalCo2, visibleEnergies]);
+    return visibleEnergies.reduce((s, e) => s + Number(e.co2_kg || 0), 0);
+  }, [visibleEnergies]);
 
   const displayedPeakKw = useMemo(() => {
-    if (!hasSubFilter) return linePeakKw;
-
     const electricValues = visibleEnergies
-      .filter((energy) => {
-        const name = energy.name.toLowerCase();
-        return (
-          energy.unit === "kW" ||
-          name.includes("electric") ||
-          name.includes("électric")
-        );
+      .filter((e) => {
+        const name = e.name.toLowerCase();
+        return e.unit === "kW" || name.includes("electric") || name.includes("électric");
       })
-      .map((energy) => Number(energy.value || 0));
-
+      .map((e) => Number(e.value || 0));
     if (!electricValues.length) return 0;
-
     return Math.max(...electricValues);
-  }, [hasSubFilter, linePeakKw, visibleEnergies]);
+  }, [visibleEnergies]);
 
-  const displayedAvgVoltage = visibleEnergies.length
-    ? visibleData.tension
-    : lineAvgVoltage;
+  const displayedAvgVoltage = visibleEnergies.length ? visibleData.tension : null;
+  const displayedAvgPowerFactor = visibleEnergies.length ? visibleData.facteurPuissance : null;
 
-  const displayedAvgPowerFactor = visibleEnergies.length
-    ? visibleData.facteurPuissance
-    : lineAvgPowerFactor;
-
+  // ── Auth handlers ───────────────────────────────────────────────────────────
   const handleLogin = async (email, password) => {
     try {
       const tokenResponse = await loginUser(email, password);
       const token = tokenResponse.access_token;
-
       localStorage.setItem("token", token);
-
       const currentUser = await getCurrentUser(token);
       const role = currentUser.role || "maintenance";
-
       setUser({
         id: currentUser.id,
         firstName: currentUser.firstName,
@@ -822,7 +516,6 @@ function App() {
         role,
         profileImage: currentUser.profileImage || "",
       });
-
       setIsLoggedIn(true);
       setActivePage(DEFAULT_PAGE[role] || "dashboard");
     } catch (error) {
@@ -832,16 +525,10 @@ function App() {
 
   const handleLogout = () => {
     localStorage.removeItem("token");
-
     setIsLoggedIn(false);
     setUser(null);
     setBackendSummary({});
-    setDiscoveredLines([]);
-    setDiscoveredZones([]);
-    setDiscoveredPlants([]);
-    setSelectedLine("line-1");
-    setSelectedPlant("all");
-    setSelectedZone("all");
+    setSelection({ plant: "", line: "", zone: "" });
     setSelectedEnergyNames([]);
     setActivePage("dashboard");
   };
@@ -854,30 +541,22 @@ function App() {
     }
   };
 
-  const handleUpdateProfile = (updatedUser) => {
-    setUser(updatedUser);
-  };
+  const handleUpdateProfile = (updatedUser) => setUser(updatedUser);
 
   const handleCreateUser = async (userData) => {
     try {
       const token = localStorage.getItem("token");
-
       await createUser(userData, token);
-
       const response = await fetchUsers(token);
-
-      setUsers(
-        response.map((item) => ({
-          id: item.id,
-          firstName: item.first_name || item.firstName,
-          lastName: item.last_name || item.lastName,
-          email: item.email,
-          password: "",
-          role: item.role,
-          profileImage: item.profile_image || "",
-        }))
-      );
-
+      setUsers(response.map((item) => ({
+        id: item.id,
+        firstName: item.first_name || item.firstName,
+        lastName: item.last_name || item.lastName,
+        email: item.email,
+        password: "",
+        role: item.role,
+        profileImage: item.profile_image || "",
+      })));
       setToastMessage("User created successfully");
     } catch (error) {
       throw new Error(error.message || "Failed to create user");
@@ -887,9 +566,7 @@ function App() {
   const handleDeleteUser = async (id) => {
     try {
       const token = localStorage.getItem("token");
-
       await deleteUser(id, token);
-
       setUsers((previous) => previous.filter((item) => item.id !== id));
       setToastMessage("User deleted");
     } catch (error) {
@@ -900,15 +577,10 @@ function App() {
   const handleUpdateRole = async (id, role) => {
     try {
       const token = localStorage.getItem("token");
-
       await updateUserRole(id, role, token);
-
       setUsers((previous) =>
-        previous.map((item) =>
-          item.id === id ? { ...item, role } : item
-        )
+        previous.map((item) => (item.id === id ? { ...item, role } : item))
       );
-
       setToastMessage("Role updated");
     } catch (error) {
       throw new Error(error.message || "Failed to update role");
@@ -918,9 +590,7 @@ function App() {
   const handleRegeneratePassword = async (requestId) => {
     try {
       const token = localStorage.getItem("token");
-
       await regenerateUserPassword(requestId, token);
-
       setToastMessage("Password regenerated");
     } catch (error) {
       throw new Error(error.message || "Failed");
@@ -935,15 +605,13 @@ function App() {
     );
   }, []);
 
-  const clearEnergy = useCallback(() => {
-    setSelectedEnergyNames([]);
-  }, []);
+  const clearEnergy = useCallback(() => setSelectedEnergyNames([]), []);
 
   const shared = {
     energies: visibleEnergies,
-    selectedLineLabel: currentLine.label,
-    selectedPlant,
-    selectedZone,
+    selectedLineLabel: activeLineLabel,
+    selectedPlant: selection.plant || "all",
+    selectedZone: selection.zone || "all",
     totalCost: displayedTotalCost,
     peakKw: displayedPeakKw,
     totalCo2: displayedTotalCo2,
@@ -954,7 +622,6 @@ function App() {
 
   const renderPage = () => {
     const role = user?.role;
-
     if (role && !PAGES_BY_ROLE[role]?.includes(activePage)) {
       return <Dashboard {...shared} />;
     }
@@ -971,7 +638,7 @@ function App() {
           <RealTimeMonitoring
             data={visibleData}
             energies={visibleEnergies}
-            selectedLineLabel={currentLine.label}
+            selectedLineLabel={activeLineLabel}
             powerQualityHistory={powerQualityHistory}
             {...shared}
           />
@@ -981,9 +648,9 @@ function App() {
         return (
           <EquipmentStatus
             energies={visibleEnergies}
-            selectedLineLabel={currentLine.label}
-            selectedPlant={selectedPlant}
-            selectedZone={selectedZone}
+            selectedLineLabel={activeLineLabel}
+            selectedPlant={selection.plant || "all"}
+            selectedZone={selection.zone || "all"}
           />
         );
 
@@ -992,7 +659,7 @@ function App() {
           <PowerQuality
             data={visibleData}
             powerQualityHistory={powerQualityHistory}
-            selectedLineLabel={currentLine.label}
+            selectedLineLabel={activeLineLabel}
           />
         );
 
@@ -1002,7 +669,7 @@ function App() {
             energies={visibleEnergies}
             carbonHistory={carbonHistory}
             totalCo2={displayedTotalCo2}
-            selectedLineLabel={currentLine.label}
+            selectedLineLabel={activeLineLabel}
           />
         );
 
@@ -1010,7 +677,7 @@ function App() {
         return (
           <Forecasting
             energies={visibleEnergies}
-            selectedLineLabel={currentLine.label}
+            selectedLineLabel={activeLineLabel}
           />
         );
 
@@ -1023,14 +690,14 @@ function App() {
       case "history":
         return (
           <HistoricalData
-            selectedLineLabel={currentLine.label}
-            selectedPlant={selectedPlant}
-            selectedZone={selectedZone}
+            selectedLineLabel={activeLineLabel}
+            selectedPlant={selection.plant || "all"}
+            selectedZone={selection.zone || "all"}
           />
         );
 
       case "weather":
-        return <WeatherPage selectedLineLabel={currentLine.label} />;
+        return <WeatherPage selectedLineLabel={activeLineLabel} />;
 
       case "profile":
         return <Profile user={user} onUpdateProfile={handleUpdateProfile} />;
@@ -1040,9 +707,9 @@ function App() {
           <MaintenancePage
             energies={visibleEnergies}
             currentUser={user}
-            selectedLineLabel={currentLine.label}
-            selectedPlant={selectedPlant}
-            selectedZone={selectedZone}
+            selectedLineLabel={activeLineLabel}
+            selectedPlant={selection.plant || "all"}
+            selectedZone={selection.zone || "all"}
           />
         );
 
@@ -1050,7 +717,7 @@ function App() {
         return (
           <EnergyPriceAnalysis
             energies={visibleEnergies}
-            selectedLineLabel={currentLine.label}
+            selectedLineLabel={activeLineLabel}
             peakKw={displayedPeakKw}
           />
         );
@@ -1078,6 +745,29 @@ function App() {
 
       case "audit":
         return <AuditLogs />;
+
+      case "sld":
+        return (
+          <div style={{ padding: "20px", height: "calc(100vh - 140px)" }}>
+            <div style={{ marginBottom: "12px" }}>
+              <h1 style={{ margin: 0, fontSize: "1.4rem" }}>SLD Display</h1>
+              <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "0.9rem" }}>
+                Live display — view only
+              </p>
+            </div>
+            <iframe
+              src="/sld.html"
+              title="SLD Monitoring"
+              style={{
+                width: "100%",
+                height: "100%",
+                border: "1px solid var(--border-color, #e2e8f0)",
+                borderRadius: "12px",
+                background: "#fff",
+              }}
+            />
+          </div>
+        );
 
       case "messages":
         return <Messages />;
@@ -1114,15 +804,9 @@ function App() {
           onLogout={handleLogout}
           onProfileClick={() => setActivePage("profile")}
           onWeatherClick={() => setActivePage("weather")}
-          lineOptions={lineOptions}
-          selectedLine={selectedLine}
-          onLineChange={handleLineChange}
-          zoneOptions={zoneOptionsForSelectedLine}
-          selectedZone={selectedZone}
-          onZoneChange={setSelectedZone}
-          plantOptions={plantOptionsForSelectedLine}
-          selectedPlant={selectedPlant}
-          onPlantChange={setSelectedPlant}
+          structure={structure}
+          selection={selection}
+          onSelectionChange={setSelection}
           energyOptions={availableNames}
           selectedEnergyNames={selectedEnergyNames}
           onToggleEnergy={toggleEnergy}
@@ -1170,7 +854,7 @@ function App() {
 
       <ChatbotWidget
         energies={visibleEnergies}
-        selectedLineLabel={currentLine.label}
+        selectedLineLabel={activeLineLabel}
         urgentCount={urgentCount}
         usersCount={users.length}
         activePage={activePage}

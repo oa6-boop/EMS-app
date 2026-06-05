@@ -4,6 +4,7 @@ const ROLE_CONFIG = {
   admin:       { label: "Admin",       icon: "👑", color: "#7c3aed", bg: "#f3e8ff", border: "#ddd6fe", desc: "Full access — all pages" },
   management:  { label: "Management",  icon: "📊", color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe", desc: "Dashboard, Reports, Forecasting, Prices" },
   maintenance: { label: "Maintenance", icon: "🔧", color: "#d97706", bg: "#fffbeb", border: "#fde68a", desc: "Equipment, Alarms, Thresholds, History" },
+  operator:    { label: "Operator",    icon: "👁️", color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc", desc: "View only — Dashboard, Equipment, LCD" },
 };
 
 export default function UsersManagement({ users, onCreateUser, onDeleteUser, onUpdateRole }) {
@@ -67,6 +68,7 @@ export default function UsersManagement({ users, onCreateUser, onDeleteUser, onU
             { label: "ADMIN",       value: users.filter(u => u.role === "admin").length,       icon: "👑", color: "#7c3aed", bg: "#f3e8ff", border: "#ddd6fe" },
             { label: "MANAGEMENT",  value: users.filter(u => u.role === "management").length,  icon: "📊", color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
             { label: "MAINTENANCE", value: users.filter(u => u.role === "maintenance").length, icon: "🔧", color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
+            { label: "OPERATOR",    value: users.filter(u => u.role === "operator").length,    icon: "👁️", color: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
           ].map(card => (
             <div key={card.label} style={{
               background: card.bg, border: `1px solid ${card.border}`,
@@ -93,7 +95,7 @@ export default function UsersManagement({ users, onCreateUser, onDeleteUser, onU
             <div className="panel-head">
               <div>
                 <h2>Create New User</h2>
-                <p>Only @jesagroup.com — assign role: Management or Maintenance</p>
+<p>Only @jesagroup.com — assign role: Management, Maintenance or Operator</p>
               </div>
             </div>
             <form onSubmit={handleSubmit}>
@@ -118,8 +120,8 @@ export default function UsersManagement({ users, onCreateUser, onDeleteUser, onU
                   Assign Role
                 </p>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-                  {["management", "maintenance"].map(role => {
-                    const cfg = ROLE_CONFIG[role];
+{["management", "maintenance", "operator"].map(role => {
+                      const cfg = ROLE_CONFIG[role];
                     return (
                       <label key={role} style={{
                         display: "flex", alignItems: "center", gap: "0.75rem",
@@ -171,8 +173,8 @@ export default function UsersManagement({ users, onCreateUser, onDeleteUser, onU
           }}
         />
         <div style={{ display: "flex", gap: "0.4rem" }}>
-          {["all", "management", "maintenance"].map(r => {
-            const cfg = r === "all"
+{["all", "management", "maintenance", "operator"].map(r => {
+              const cfg = r === "all"
               ? { label: "All", color: "#4299e1", bg: "#ebf8ff" }
               : ROLE_CONFIG[r];
             return (
@@ -244,7 +246,7 @@ export default function UsersManagement({ users, onCreateUser, onDeleteUser, onU
                       <td>
                         {/* Boutons pour changer le rôle */}
                         <div style={{ display: "flex", gap: "0.4rem" }}>
-                          {["management", "maintenance"].map(role => {
+                          {["management", "maintenance", "operator"].map(role => {
                             const rc     = ROLE_CONFIG[role];
                             const active = u.role === role;
                             return (

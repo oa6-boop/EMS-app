@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Building2, Filter, CloudSun, X } from "lucide-react";
 
 export default function Header({
@@ -7,17 +7,9 @@ export default function Header({
   onProfileClick,
   onWeatherClick,
 
-  lineOptions = [],
-  selectedLine = "line-1",
-  onLineChange,
-
-  plantOptions = [],
-  selectedPlant = "all",
-  onPlantChange,
-
-  zoneOptions = [],
-  selectedZone = "all",
-  onZoneChange,
+  structure = [],            // arbre Plant → Line → Zone → Equipment
+  selection = { plant: "", line: "", zone: "" },
+  onSelectionChange,
 
   energyOptions = [],
   selectedEnergyNames = [],
@@ -26,7 +18,6 @@ export default function Header({
 }) {
   const [time, setTime] = useState(new Date());
   const [panel, setPanel] = useState(null); // "location" | "energy"
-
   const [isDark, setIsDark] = useState(
     () => localStorage.getItem("ems_dark_mode") === "true"
   );
@@ -41,54 +32,84 @@ export default function Header({
     localStorage.setItem("ems_dark_mode", String(isDark));
   }, [isDark]);
 
-  const toggle = (name) => {
-    setPanel((p) => (p === name ? null : name));
-  };
+  const { plant, line, zone } = selection;
 
+  // Options en cascade
+  const plants = useMemo(() => structure.map((p) => p.plant), [structure]);
+
+  const lines = useMemo(() => {
+    if (!plant) return [];
+    const p = structure.find((x) => x.plant === plant);
+    return p ? p.lines.map((l) => l.line) : [];
+  }, [structure, plant]);
+
+  const zones = useMemo(() => {
+    if (!plant || !line) return [];
+    const p = structure.find((x) => x.plant === plant);
+    const l = p?.lines.find((x) => x.line === line);
+    return l ? l.zones.map((z) => z.zone) : [];
+  }, [structure, plant, line]);
+
+  const equipmentCount = useMemo(() => {
+    const set = new Set();
+    structure.forEach((p) => {
+      if (plant && p.plant !== plant) return;
+      p.lines.forEach((l) => {
+        if (line && l.line !== line) return;
+        l.zones.forEach((z) => {
+          if (zone && z.zone !== zone) return;
+          z.equipment.forEach((e) => set.add(e));
+        });
+      });
+    });
+    return set.size;
+  }, [structure, plant, line, zone]);
+
+  const toggle = (name) => setPanel((p) => (p === name ? null : name));
   const close = () => setPanel(null);
-
-  const currentLine =
-    lineOptions.find((l) => l.id === selectedLine)?.label || "Line 1";
-
-  const currentPlant = selectedPlant === "all" ? "All Plants" : selectedPlant;
-  const currentZone = selectedZone === "all" ? "All Zones" : selectedZone;
 
   const initials = user
     ? `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase()
     : "?";
 
-  const handleLineChange = (lineId) => {
-    onLineChange?.(lineId);
-    onPlantChange?.("all");
-    onZoneChange?.("all");
-  };
+  // Handlers cascadants
+  const handlePlant = (p) => onSelectionChange?.({ plant: p, line: "", zone: "" });
+  const handleLine = (l) => onSelectionChange?.({ plant, line: l, zone: "" });
+  const handleZone = (z) => onSelectionChange?.({ plant, line, zone: z });
+  const clearAll = () => onSelectionChange?.({ plant: "", line: "", zone: "" });
 
-  const clearLocationFilters = () => {
-    onPlantChange?.("all");
-    onZoneChange?.("all");
-  };
+  const breadcrumb = [plant || "All Plants", line, zone].filter(Boolean).join(" · ");
 
   const DropPanel = ({ children, onClose, title }) => (
     <div className="filter-panel" style={{ minWidth: "260px" }}>
       <div className="filter-panel-head">
         <span style={{ fontWeight: 700, fontSize: "0.88rem" }}>{title}</span>
-
         <button
           type="button"
           onClick={onClose}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            color: "var(--text-secondary)",
-          }}
+          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)" }}
         >
           <X size={14} />
         </button>
       </div>
-
       {children}
     </div>
+  );
+
+  const SectionTitle = ({ children }) => (
+    <div style={{ fontWeight: 700, fontSize: "0.8rem", color: "var(--text-main)", marginBottom: "0.4rem" }}>
+      {children}
+    </div>
+  );
+
+  const Row = ({ checked, onChange, label, group }) => (
+    <label
+      className="filter-option-row"
+      style={{ cursor: "pointer", padding: "5px 0", display: "flex", gap: "8px", alignItems: "center" }}
+    >
+      <input type="radio" name={group} checked={checked} onChange={onChange} style={{ accentColor: "#2563eb" }} />
+      <span style={{ fontWeight: checked ? 700 : 400, fontSize: "0.86rem" }}>{label}</span>
+    </label>
   );
 
   return (
@@ -96,26 +117,11 @@ export default function Header({
       {/* LEFT */}
       <div className="header-left">
         <div>
-          <div
-            style={{
-              fontWeight: 800,
-              fontSize: "1rem",
-              color: "var(--text-main)",
-            }}
-          >
+          <div style={{ fontWeight: 800, fontSize: "1rem", color: "var(--text-main)" }}>
             Energy Management System
           </div>
-
-          <div
-            style={{
-              fontSize: "0.72rem",
-              color: "var(--text-secondary)",
-              marginTop: "1px",
-            }}
-          >
-            {currentLine}
-            {selectedPlant !== "all" && ` · ${currentPlant}`}
-            {selectedZone !== "all" && ` · ${currentZone}`}
+          <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "1px" }}>
+            {breadcrumb} · {equipmentCount} equipment
           </div>
         </div>
       </div>
@@ -130,31 +136,22 @@ export default function Header({
 
       {/* RIGHT */}
       <div className="header-right">
-        {/* LOCATION FILTER ICON ONLY */}
+        {/* LOCATION FILTER : Plant → Line → Zone */}
         <div className="header-filter-wrap">
           <button
             type="button"
             className={`header-icon-btn ${panel === "location" ? "active" : ""}`}
             onClick={() => toggle("location")}
-            title="Filter by line, plant and zone"
+            title="Filter by plant, line and zone"
             style={{
-              width: "48px",
-              height: "48px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 0,
-              borderRadius: "14px",
+              width: "48px", height: "48px", display: "flex", alignItems: "center",
+              justifyContent: "center", padding: 0, borderRadius: "14px",
               background: panel === "location" ? "#2563eb" : "var(--bg-card)",
               color: panel === "location" ? "#fff" : "#2563eb",
-              border:
-                panel === "location"
-                  ? "2px solid #2563eb"
-                  : "1px solid #dbe3ef",
-              boxShadow:
-                panel === "location"
-                  ? "0 0 0 3px rgba(37, 99, 235, 0.12)"
-                  : "0 2px 8px rgba(15, 23, 42, 0.04)",
+              border: panel === "location" ? "2px solid #2563eb" : "1px solid #dbe3ef",
+              boxShadow: panel === "location"
+                ? "0 0 0 3px rgba(37, 99, 235, 0.12)"
+                : "0 2px 8px rgba(15, 23, 42, 0.04)",
             }}
           >
             <Building2 size={22} strokeWidth={2.2} />
@@ -162,164 +159,54 @@ export default function Header({
 
           {panel === "location" && (
             <DropPanel title="Location Filters" onClose={close}>
-              {/* MAIN FILTER: LINE */}
+              {/* 1. PLANT */}
               <div style={{ marginBottom: "0.8rem" }}>
-                <div
-                  style={{
-                    fontWeight: 700,
-                    fontSize: "0.8rem",
-                    color: "var(--text-main)",
-                    marginBottom: "0.4rem",
-                  }}
-                >
-                  1. Production Line
-                </div>
-
+                <SectionTitle>1. Plant</SectionTitle>
                 <div className="filter-option-list">
-                  {lineOptions.map((line) => (
-                    <label
-                      key={line.id}
-                      className="filter-option-row"
-                      style={{
-                        cursor: "pointer",
-                        padding: "5px 0",
-                        display: "flex",
-                        gap: "8px",
-                        alignItems: "center",
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="line"
-                        checked={selectedLine === line.id}
-                        onChange={() => handleLineChange(line.id)}
-                        style={{ accentColor: "#2563eb" }}
-                      />
-
-                      <span
-                        style={{
-                          fontWeight: selectedLine === line.id ? 700 : 400,
-                          fontSize: "0.88rem",
-                        }}
-                      >
-                        {line.label}
-                      </span>
-                    </label>
+                  <Row group="plant" checked={plant === ""} onChange={() => handlePlant("")} label="All Plants" />
+                  {plants.map((p) => (
+                    <Row key={p} group="plant" checked={plant === p} onChange={() => handlePlant(p)} label={p} />
                   ))}
                 </div>
               </div>
 
-              {/* SUB FILTER: PLANT */}
-              {plantOptions.length > 0 && (
+              {/* 2. LINE */}
+              {plant && lines.length > 0 && (
                 <div style={{ marginBottom: "0.8rem" }}>
-                  <div
-                    style={{
-                      fontWeight: 700,
-                      fontSize: "0.8rem",
-                      color: "var(--text-main)",
-                      marginBottom: "0.4rem",
-                    }}
-                  >
-                    2. Plant
-                  </div>
-
+                  <SectionTitle>2. Production Line</SectionTitle>
                   <div className="filter-option-list">
-                    {["all", ...plantOptions].map((plant) => (
-                      <label
-                        key={plant}
-                        className="filter-option-row"
-                        style={{
-                          cursor: "pointer",
-                          padding: "4px 0",
-                          display: "flex",
-                          gap: "8px",
-                          alignItems: "center",
-                        }}
-                      >
-                        <input
-                          type="radio"
-                          name="plant"
-                          checked={selectedPlant === plant}
-                          onChange={() => onPlantChange?.(plant)}
-                          style={{ accentColor: "#2563eb" }}
-                        />
-
-                        <span
-                          style={{
-                            fontWeight: selectedPlant === plant ? 700 : 400,
-                            fontSize: "0.85rem",
-                          }}
-                        >
-                          {plant === "all" ? "All Plants" : plant}
-                        </span>
-                      </label>
+                    <Row group="line" checked={line === ""} onChange={() => handleLine("")} label="All Lines" />
+                    {lines.map((l) => (
+                      <Row key={l} group="line" checked={line === l} onChange={() => handleLine(l)} label={l} />
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* SUB FILTER: ZONE */}
-              {zoneOptions.length > 0 && (
+              {/* 3. ZONE */}
+              {line && zones.length > 0 && (
                 <div style={{ marginBottom: "0.8rem" }}>
-                  <div
-                    style={{
-                      fontWeight: 700,
-                      fontSize: "0.8rem",
-                      color: "var(--text-main)",
-                      marginBottom: "0.4rem",
-                    }}
-                  >
-                    3. Zone
-                  </div>
-
+                  <SectionTitle>3. Zone</SectionTitle>
                   <div className="filter-option-list">
-                    {["all", ...zoneOptions].map((zone) => (
-                      <label
-                        key={zone}
-                        className="filter-option-row"
-                        style={{
-                          cursor: "pointer",
-                          padding: "4px 0",
-                          display: "flex",
-                          gap: "8px",
-                          alignItems: "center",
-                        }}
-                      >
-                        <input
-                          type="radio"
-                          name="zone"
-                          checked={selectedZone === zone}
-                          onChange={() => onZoneChange?.(zone)}
-                          style={{ accentColor: "#2563eb" }}
-                        />
-
-                        <span
-                          style={{
-                            fontWeight: selectedZone === zone ? 700 : 400,
-                            fontSize: "0.85rem",
-                          }}
-                        >
-                          {zone === "all" ? "All Zones" : zone}
-                        </span>
-                      </label>
+                    <Row group="zone" checked={zone === ""} onChange={() => handleZone("")} label="All Zones" />
+                    {zones.map((z) => (
+                      <Row key={z} group="zone" checked={zone === z} onChange={() => handleZone(z)} label={z} />
                     ))}
                   </div>
                 </div>
               )}
+
+              <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginBottom: "0.4rem" }}>
+                ⚙️ {equipmentCount} equipment
+                {zone ? " in zone" : line ? " in line" : plant ? " in plant" : " total"}
+              </div>
 
               <button
                 type="button"
-                onClick={clearLocationFilters}
-                style={{
-                  fontSize: "0.78rem",
-                  color: "#ef4444",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  marginTop: "0.2rem",
-                }}
+                onClick={clearAll}
+                style={{ fontSize: "0.78rem", color: "#ef4444", background: "none", border: "none", cursor: "pointer" }}
               >
-                Clear plant and zone
+                Clear all filters
               </button>
             </DropPanel>
           )}
@@ -335,25 +222,12 @@ export default function Header({
             style={{ position: "relative" }}
           >
             <Filter size={17} />
-
             {selectedEnergyNames.length > 0 && (
-              <span
-                style={{
-                  position: "absolute",
-                  top: -4,
-                  right: -4,
-                  background: "#ef4444",
-                  color: "#fff",
-                  fontSize: "0.6rem",
-                  fontWeight: 700,
-                  borderRadius: "50%",
-                  width: 16,
-                  height: 16,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
+              <span style={{
+                position: "absolute", top: -4, right: -4, background: "#ef4444", color: "#fff",
+                fontSize: "0.6rem", fontWeight: 700, borderRadius: "50%", width: 16, height: 16,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
                 {selectedEnergyNames.length}
               </span>
             )}
@@ -364,40 +238,20 @@ export default function Header({
               <button
                 type="button"
                 onClick={() => onClearEnergySelection?.()}
-                style={{
-                  fontSize: "0.78rem",
-                  color: "#ef4444",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  marginBottom: "0.5rem",
-                }}
+                style={{ fontSize: "0.78rem", color: "#ef4444", background: "none", border: "none", cursor: "pointer", marginBottom: "0.5rem" }}
               >
                 Clear all
               </button>
 
               {energyOptions.length === 0 ? (
-                <p
-                  style={{
-                    fontSize: "0.82rem",
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  No data yet
-                </p>
+                <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>No data yet</p>
               ) : (
                 <div className="filter-option-list">
                   {energyOptions.map((name) => (
                     <label
                       key={name}
                       className="filter-option-row"
-                      style={{
-                        cursor: "pointer",
-                        padding: "4px 0",
-                        display: "flex",
-                        gap: "8px",
-                        alignItems: "center",
-                      }}
+                      style={{ cursor: "pointer", padding: "4px 0", display: "flex", gap: "8px", alignItems: "center" }}
                     >
                       <input
                         type="checkbox"
@@ -405,15 +259,7 @@ export default function Header({
                         onChange={() => onToggleEnergy?.(name)}
                         style={{ accentColor: "#2563eb" }}
                       />
-
-                      <span
-                        style={{
-                          fontWeight: selectedEnergyNames.includes(name)
-                            ? 700
-                            : 400,
-                          fontSize: "0.85rem",
-                        }}
-                      >
+                      <span style={{ fontWeight: selectedEnergyNames.includes(name) ? 700 : 400, fontSize: "0.85rem" }}>
                         {name}
                       </span>
                     </label>
@@ -425,12 +271,7 @@ export default function Header({
         </div>
 
         {/* WEATHER */}
-        <button
-          type="button"
-          className="header-icon-btn"
-          onClick={onWeatherClick}
-          title="Weather"
-        >
+        <button type="button" className="header-icon-btn" onClick={onWeatherClick} title="Weather">
           <CloudSun size={17} />
         </button>
 
@@ -445,18 +286,9 @@ export default function Header({
         </button>
 
         {/* AVATAR */}
-        <button
-          type="button"
-          className="profile-button"
-          onClick={onProfileClick}
-          title="My Profile"
-        >
+        <button type="button" className="profile-button" onClick={onProfileClick} title="My Profile">
           {user?.profileImage ? (
-            <img
-              src={user.profileImage}
-              alt="Profile"
-              className="profile-avatar-image"
-            />
+            <img src={user.profileImage} alt="Profile" className="profile-avatar-image" />
           ) : (
             <div className="profile-avatar">{initials}</div>
           )}

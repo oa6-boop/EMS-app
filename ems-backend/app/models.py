@@ -21,6 +21,9 @@ class TelemetryRecord(Base):
     frequency       = Column(Float,    nullable=True)
     power_factor    = Column(Float,    nullable=True)
     thd             = Column(Float,    nullable=True)
+    # Tags equipement (ex: "pump,critical,hvac") — envoyes par la DataPlatform
+    # ou derives en fallback. Stockes en chaine separee par virgules.
+    tags            = Column(String,   nullable=True, index=True)
     timestamp       = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 

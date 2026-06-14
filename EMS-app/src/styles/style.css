@@ -123,8 +123,14 @@ body.dark-mode .switch-tags button.active { background: #2563eb; color: #fff; }
    LAYOUT
 ══════════════════════════════════════════════════════ */
 .layout { display: flex; min-height: 100vh; }
-
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  align-self: flex-start;
+}
 .main {
+  position: relative;
   flex:       1;
   padding:    24px;
   overflow-y: auto;
@@ -236,6 +242,9 @@ body.dark-mode .switch-tags button.active { background: #2563eb; color: #fff; }
    HEADER BAR
 ══════════════════════════════════════════════════════ */
 .header-bar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
   display:         flex;
   align-items:     center;
   justify-content: space-between;

@@ -65,6 +65,7 @@ export default function EnergyPriceAnalysis({
   energies          = [],
   selectedLineLabel = "Production Line 1",
   peakKw            = 0,
+  cumulativeKwh     = 0,
 }) {
   const [dailyKwh,    setDailyKwh]    = useState("500");
   const [selectedDay, setSelectedDay] = useState("weekday");
@@ -76,10 +77,11 @@ export default function EnergyPriceAnalysis({
 
   const totalKwh = parseFloat(dailyKwh) || 500;
   const profile  = consumptionProfile[selectedDay];
+  const profileSum = profile.reduce((s, v) => s + v, 0);
 
   const hourlyData = useMemo(() => {
     return HOURS_IN_DAY.map(hour => {
-      const pct       = profile[hour] / 100;
+      const pct       = profile[hour] / profileSum;
       const kwh       = totalKwh * pct;
       const tariffKey = getTariffForHour(hour);
       const rate      = ONEE_TARIFFS[tariffKey].rate;
@@ -135,6 +137,38 @@ export default function EnergyPriceAnalysis({
           ))}
         </div>
       </div>
+
+      {/* Données RÉELLES cumulées (DataPlatform) */}
+      <section className="section-block">
+        <div className="section-title-wrap">
+          <h2>Real Consumption (live)</h2>
+          <p>Actual cumulative data from DataPlatform — {selectedLineLabel}</p>
+        </div>
+        <div className="carbon-kpis">
+          <div className="carbon-card">
+            <h4>🔋 Total Energy Consumed</h4>
+            <strong style={{ color:"#234e52", fontSize:"1.1rem" }}>{(Number(cumulativeKwh) || 0).toFixed(0)} kWh</strong>
+            <span>Cumulative counter</span>
+          </div>
+          <div className="carbon-card">
+            <h4>💰 Total Cost (cumulative)</h4>
+            <strong style={{ color:"#744210", fontSize:"1.1rem" }}>{((Number(cumulativeKwh) || 0) * 1.40).toFixed(2)} MAD</strong>
+            <span>Total consumed × 1.40</span>
+          </div>
+          <div className="carbon-card">
+            <h4>🌱 Total CO₂ (cumulative)</h4>
+            <strong style={{ color:"#38a169", fontSize:"1.1rem" }}>{((Number(cumulativeKwh) || 0) * 0.718).toFixed(2)} kg</strong>
+            <span>Total consumed × 0.718</span>
+          </div>
+          {peakKw > 0 && (
+            <div className="carbon-card">
+              <h4>⚡ Peak Demand</h4>
+              <strong style={{ color:"#ed8936", fontSize:"1.1rem" }}>{peakKw.toFixed(1)} kW</strong>
+              <span>Live maximum</span>
+            </div>
+          )}
+        </div>
+      </section>
 
       {/* Input consommation */}
       <section className="section-block">

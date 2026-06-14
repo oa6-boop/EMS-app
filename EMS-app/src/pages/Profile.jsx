@@ -203,9 +203,7 @@ export default function Profile({ user, onUpdateProfile }) {
           <div style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
             {[
               { label: "Role",   value: rc.label    },
-              { label: "ID",     value: `#${user.id}` },
               { label: "Status", value: "Active ✅"  },
-              { label: "System", value: "JESA EMS"   },
             ].map(s => (
               <div key={s.label} style={{
                 background: "var(--bg-main)", borderRadius: "10px",

@@ -115,13 +115,11 @@ export default function CarbonEmissions({ energies = [], carbonHistory = [], tot
           <div className="carbon-card">
             <h4>⚖️ Tonnes équivalent</h4>
             <strong>{currentCo2Tonnes.toFixed(5)} tCO₂e</strong>
-            <span>1 tonne = 1000 kg CO₂</span>
           </div>
 
           <div className="carbon-card">
             <h4>📊 Carbon Intensity</h4>
             <strong>{avgIntensity} kgCO₂/kWh</strong>
-            <span>ONEE Morocco reference: {CO2_FACTOR} kgCO₂/kWh</span>
           </div>
 
           {/* Énergies CO2 directes si disponibles */}

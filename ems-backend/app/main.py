@@ -1,4 +1,5 @@
 import os
+import asyncio
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from fastapi import FastAPI
@@ -9,7 +10,7 @@ from app.core.config   import APP_NAME
 from app.core.security import get_password_hash
 from app.db            import Base, SessionLocal, engine
 from app.models        import User, TelemetryRecord, EnergyHistory, EnergyRate
-from app.mqtt_client   import start_mqtt
+from app.mqtt_client   import start_mqtt, set_main_loop
 
 from app.routes.auth        import router as auth_router
 from app.routes.telemetry   import router as telemetry_router
@@ -41,6 +42,10 @@ app.add_middleware(
         "http://ems-app:5173",
         "http://0.0.0.0:5173",
     ],
+    # Autorise aussi l'accès via une IP du réseau local (ex: démo jury
+    # depuis un autre PC : http://192.168.x.x:5173). Le frontend utilise
+    # déjà window.location.hostname, donc l'origin varie avec l'IP.
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -169,10 +174,31 @@ def clean_simulator_data():
 
 
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
+    """
+    Startup en ASYNC (obligatoire) : une fonction sync serait exécutée dans
+    un threadpool, où asyncio.get_running_loop() échouerait. Ici on capture
+    le loop principal d'uvicorn et on le transmet à mqtt_client pour que
+    les threads MQTT/Kafka puissent diffuser sur le WebSocket.
+    """
     global mqtt_client
     try:
+        set_main_loop(asyncio.get_running_loop())
+
         Base.metadata.create_all(bind=engine)
+
+        # Mini-migration : create_all ne modifie pas les tables existantes,
+        # donc on ajoute la colonne "tags" si elle n'existe pas encore.
+        try:
+            from sqlalchemy import text
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE telemetry_records "
+                    "ADD COLUMN IF NOT EXISTS tags VARCHAR"
+                ))
+            print("✅ Column 'tags' ready on telemetry_records")
+        except Exception as exc:
+            print(f"Tags column migration warning: {exc}")
         create_default_admin()
         initialize_default_energy_rates()
         clean_simulator_data()
@@ -222,5 +248,5 @@ app.include_router(history_router)
 app.include_router(thresholds_router)
 app.include_router(maintenance_router)
 app.include_router(sec_router)
-app.include_router(energy_rates_router)  
+app.include_router(energy_rates_router)
 app.include_router(weather_router)

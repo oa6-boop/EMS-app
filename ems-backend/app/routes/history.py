@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, distinct
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
@@ -8,6 +8,36 @@ from app.models import TelemetryRecord
 from app.utils import calculate_cost, calculate_co2
 
 router = APIRouter(prefix="/api/history", tags=["history"])
+
+ELEC_RATE_MAD = 1.40          # tarif électricité ONEE
+CO2_FACTOR    = 0.718         # facteur ONEE Maroc
+
+# Map nom logique → (nom exact, unité) pour ne PAS mélanger
+# "Electricity" (kW, puissance) avec "Electricity-kWh" (compteur cumulé)
+ENERGY_FILTERS = {
+    "Electricity":     ("Electricity", "kW"),
+    "Electricity-kWh": ("Electricity-kWh", "kWh"),
+    "CO2-Emissions":   ("CO2-Emissions", None),
+}
+
+
+def filtered_query(db, line_name, energy_name, start=None):
+    q = db.query(TelemetryRecord).filter(
+        TelemetryRecord.production_line == line_name,
+        TelemetryRecord.source != "simulator",
+    )
+    if start is not None:
+        q = q.filter(TelemetryRecord.timestamp >= start)
+
+    target = ENERGY_FILTERS.get(energy_name)
+    if target:
+        exact_name, exact_unit = target
+        q = q.filter(TelemetryRecord.energy_name == exact_name)
+        if exact_unit:
+            q = q.filter(TelemetryRecord.unit == exact_unit)
+    else:
+        q = q.filter(TelemetryRecord.energy_name.ilike(f"%{energy_name.split('-')[0]}%"))
+    return q
 
 
 @router.get("/aggregate/{line_name}")
@@ -27,31 +57,7 @@ def get_aggregated_history(
     }
     start = ranges[period]
 
-    # Filtre souple : ILIKE pour correspondre aux variantes de noms
-    # ex: "Electricity" correspond à "Electricity (kW)" et "Electricity-kWh"
-    records = (
-        db.query(TelemetryRecord)
-        .filter(
-            TelemetryRecord.production_line == line_name,
-            TelemetryRecord.energy_name.ilike(f"%{energy_name.split('-')[0]}%"),
-            TelemetryRecord.timestamp >= start,
-        )
-        .order_by(TelemetryRecord.timestamp)
-        .all()
-    )
-
-    # Si pas de résultats, essayer avec toutes les énergies de cette ligne
-    if not records:
-        records = (
-            db.query(TelemetryRecord)
-            .filter(
-                TelemetryRecord.production_line == line_name,
-                TelemetryRecord.timestamp >= start,
-            )
-            .order_by(TelemetryRecord.timestamp)
-            .limit(500)
-            .all()
-        )
+    records = filtered_query(db, line_name, energy_name, start).order_by(TelemetryRecord.timestamp).all()
 
     if not records:
         return {
@@ -108,13 +114,8 @@ def get_comparison(
 
     def get_records(start, end):
         return (
-            db.query(TelemetryRecord)
-            .filter(
-                TelemetryRecord.production_line == line_name,
-                TelemetryRecord.energy_name.ilike(f"%{energy_name.split('-')[0]}%"),
-                TelemetryRecord.timestamp >= start,
-                TelemetryRecord.timestamp <  end,
-            )
+            filtered_query(db, line_name, energy_name, start)
+            .filter(TelemetryRecord.timestamp < end)
             .order_by(TelemetryRecord.timestamp)
             .all()
         )
@@ -158,7 +159,6 @@ def get_all_lines_summary(
     period: str = Query(default="day", enum=["hour", "day", "week", "month"]),
     db: Session = Depends(get_db),
 ):
-    from sqlalchemy import distinct
     now   = datetime.utcnow()
     start = now - {
         "hour":  timedelta(hours=1),
@@ -176,22 +176,54 @@ def get_all_lines_summary(
             .filter(
                 TelemetryRecord.production_line == line,
                 TelemetryRecord.timestamp       >= start,
+                TelemetryRecord.source          != "simulator",
             )
             .order_by(desc(TelemetryRecord.timestamp))
-            .limit(100)
+            .limit(200)
             .all()
         )
 
+        # Puissance instantanée (kW) — énergie consommée
         kw_vals = [r.value for r in records if r.unit == "kW"]
-        costs   = [calculate_cost(r.energy_name, r.value) for r in records]
-        co2s    = [calculate_co2(r.energy_name, r.value, r.unit) for r in records]
+
+        # Compteur cumulé (kWh) sur la période → consommation = max - min
+        kwh_vals_period = [r.value for r in records if r.unit == "kWh"]
+        kwh_start = min(kwh_vals_period) if kwh_vals_period else 0.0
+        kwh_end   = max(kwh_vals_period) if kwh_vals_period else 0.0
+        consumption_kwh = max(0.0, kwh_end - kwh_start)
+
+        # Compteur cumulé TOTAL (depuis toujours) pour cette ligne
+        cumulative_kwh = (
+            db.query(func.max(TelemetryRecord.value))
+            .filter(
+                TelemetryRecord.production_line == line,
+                TelemetryRecord.unit == "kWh",
+                TelemetryRecord.source != "simulator",
+            )
+            .scalar()
+        ) or 0.0
+
+        # Coûts
+        period_cost     = round(consumption_kwh * ELEC_RATE_MAD, 2)   # conso de la période
+        cumulative_cost = round(cumulative_kwh * ELEC_RATE_MAD, 2)    # total historique
+        period_co2      = round(consumption_kwh * CO2_FACTOR, 3)
+        cumulative_co2  = round(cumulative_kwh * CO2_FACTOR, 3)
+
+        avg_kw = round(sum(kw_vals) / len(kw_vals), 2) if kw_vals else 0.0
+        max_kw = round(max(kw_vals), 2) if kw_vals else 0.0
 
         result[line] = {
-            "avg_kw":     round(sum(kw_vals) / len(kw_vals), 2) if kw_vals else 0,
-            "max_kw":     round(max(kw_vals), 2) if kw_vals else 0,
-            "total_cost": round(sum(costs), 4),
-            "total_co2":  round(sum(co2s),  3),
-            "records":    len(records),
+            "avg_kw":          avg_kw,
+            "max_kw":          max_kw,
+            "total_cost":      period_cost,        # coût de la période
+            "total_co2":       period_co2,         # CO2 de la période
+            "consumption_kwh": round(consumption_kwh, 2),
+            "cumulative_kwh":  round(cumulative_kwh, 2),   # ← énergie totale consommée
+            "cumulative_cost": cumulative_cost,            # ← coût total cumulé
+            "cumulative_co2":  cumulative_co2,
+            "records":         len(records),
+            "stats_kw": {"avg": avg_kw, "max": max_kw,
+                         "min": round(min(kw_vals), 2) if kw_vals else 0.0},
         }
 
     return {"period": period, "lines": result}

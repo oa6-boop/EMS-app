@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Body
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from app.core.deps import require_admin
+from app.core.deps import require_admin, get_current_user
 from app.db import get_db
 from app.models import AuditLog, User
 
@@ -32,3 +34,26 @@ def get_audit_logs(
         }
         for log in logs
     ]
+
+
+@router.post("/audit-logs")
+def create_audit_log(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    action = payload.get("action", "ACTION")
+    description = payload.get("description", "")
+
+    user_name = f"{current.first_name} {current.last_name}".strip() or current.email
+
+    db.add(AuditLog(
+        action=action,
+        performed_by=user_name,
+        target_user=None,
+        description=description,
+        timestamp=datetime.utcnow(),
+    ))
+    db.commit()
+
+    return {"message": "logged"}

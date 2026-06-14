@@ -1,127 +1,90 @@
-﻿from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, distinct
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import TelemetryRecord
 
-CO2_FACTOR_KG_PER_KWH = 0.475
+CO2_FACTOR_KG_PER_KWH = 0.718   # ONEE Maroc (corrigé)
+ELEC_RATE_MAD         = 1.40    # tarif électricité
 
 router = APIRouter(prefix="/api/charts", tags=["charts"])
 
 
 def linear_regression(x_list, y_list):
     n = len(x_list)
-
     if n < 2:
         return 0.0, y_list[0] if y_list else 0.0
-
     sum_x = sum(x_list)
     sum_y = sum(y_list)
     sum_xy = sum(x * y for x, y in zip(x_list, y_list))
     sum_xx = sum(x * x for x in x_list)
-
     denominator = n * sum_xx - sum_x * sum_x
-
     if abs(denominator) < 1e-10:
         return 0.0, sum_y / n
-
     slope = (n * sum_xy - sum_x * sum_y) / denominator
     intercept = (sum_y - slope * sum_x) / n
-
     return slope, intercept
 
 
 def predict_next(values, steps=5):
     if not values:
         return []
-
     if len(values) < 2:
         return [round(values[0], 3)] * steps
-
     x_values = list(range(len(values)))
     slope, intercept = linear_regression(x_values, values)
-
     predictions = []
-
     for i in range(1, steps + 1):
         prediction = slope * (len(values) + i - 1) + intercept
         predictions.append(round(max(0.0, prediction), 3))
-
     return predictions
 
 
 def predict_with_ci(values, steps=5):
     if not values or len(values) < 2:
         value = values[0] if values else 0.0
-
         return {
             "predictions": [round(value, 3)] * steps,
             "ci_low": [round(max(0.0, value * 0.95), 3)] * steps,
             "ci_high": [round(value * 1.05, 3)] * steps,
         }
-
     x_values = list(range(len(values)))
     slope, intercept = linear_regression(x_values, values)
-
     residuals = []
-
     for i in range(len(values)):
         predicted_value = slope * x_values[i] + intercept
         residuals.append(values[i] - predicted_value)
-
     variance = sum(r ** 2 for r in residuals) / max(len(residuals) - 2, 1)
     std_res = variance ** 0.5
-
-    predictions = []
-    ci_low = []
-    ci_high = []
-
+    predictions, ci_low, ci_high = [], [], []
     for i in range(1, steps + 1):
-        prediction = slope * (len(values) + i - 1) + intercept
-        prediction = max(0.0, prediction)
+        prediction = max(0.0, slope * (len(values) + i - 1) + intercept)
         margin = 2 * std_res * (1 + i * 0.15)
-
         predictions.append(round(prediction, 3))
         ci_low.append(round(max(0.0, prediction - margin), 3))
         ci_high.append(round(prediction + margin, 3))
-
-    return {
-        "predictions": predictions,
-        "ci_low": ci_low,
-        "ci_high": ci_high,
-    }
+    return {"predictions": predictions, "ci_low": ci_low, "ci_high": ci_high}
 
 
 def calculate_statistics(values):
     if not values:
-        return {
-            "min": 0,
-            "max": 0,
-            "avg": 0,
-            "std": 0,
-            "trend": "stable",
-        }
-
+        return {"min": 0, "max": 0, "avg": 0, "std": 0, "trend": "stable"}
     count = len(values)
     minimum = min(values)
     maximum = max(values)
     average = sum(values) / count
     std = (sum((value - average) ** 2 for value in values) / count) ** 0.5
-
     half = count // 2
     trend = "stable"
-
     if half > 0:
         avg_1 = sum(values[:half]) / half
         avg_2 = sum(values[half:]) / max(count - half, 1)
         diff_pct = (avg_2 - avg_1) / (avg_1 + 0.001) * 100
-
         if diff_pct > 5:
             trend = "increasing"
         elif diff_pct < -5:
             trend = "decreasing"
-
     return {
         "min": round(minimum, 3),
         "max": round(maximum, 3),
@@ -134,10 +97,8 @@ def calculate_statistics(values):
 def confidence_score(values):
     if len(values) < 3:
         return 50.0
-
     stats = calculate_statistics(values)
     coefficient_variation = stats["std"] / (stats["avg"] + 0.001)
-
     return round(max(0.0, min(100.0, 100.0 - coefficient_variation * 100.0)), 1)
 
 
@@ -158,7 +119,6 @@ def get_realtime_charts(
         .limit(limit)
         .all()
     )
-
     records = list(reversed(records))
 
     voltages = [record.voltage for record in records if record.voltage is not None]
@@ -175,10 +135,10 @@ def get_realtime_charts(
             "values": voltages,
             "predictions": predict_next(voltages, 5),
             "stats": calculate_statistics(voltages),
-            "nominal": 415.0,
+            "nominal": 230.0,
             "unit": "V",
-            "min_alarm": 380,
-            "max_alarm": 440,
+            "min_alarm": 210,
+            "max_alarm": 250,
             "label": "Voltage",
             "color": "#4299e1",
         },
@@ -188,7 +148,7 @@ def get_realtime_charts(
             "stats": calculate_statistics(power_factors),
             "nominal": 0.95,
             "unit": "",
-            "min_alarm": 0.85,
+            "min_alarm": 0.80,
             "max_alarm": None,
             "label": "Power Factor",
             "color": "#9f7aea",
@@ -210,8 +170,8 @@ def get_realtime_charts(
             "stats": calculate_statistics(frequencies),
             "nominal": 50.0,
             "unit": "Hz",
-            "min_alarm": 49.0,
-            "max_alarm": 51.0,
+            "min_alarm": 49.5,
+            "max_alarm": 50.5,
             "label": "Frequency",
             "color": "#38b2ac",
         },
@@ -235,7 +195,6 @@ def get_predictions(
         .limit(50)
         .all()
     )
-
     records = list(reversed(records))
 
     voltages = [record.voltage for record in records if record.voltage is not None]
@@ -282,7 +241,6 @@ def get_lines_comparison(db: Session = Depends(get_db)):
     lines = [row[0] for row in lines_query if row[0]]
 
     result = {}
-
     for line in sorted(lines):
         records = (
             db.query(TelemetryRecord)
@@ -300,21 +258,22 @@ def get_lines_comparison(db: Session = Depends(get_db)):
         voltages = [record.voltage for record in records if record.voltage is not None]
         power_factors = [record.power_factor for record in records if record.power_factor is not None]
 
-        latest_kwh = max(kwh_values) if kwh_values else 0.0
-        total_co2 = round(latest_kwh * CO2_FACTOR_KG_PER_KWH, 3)
-        total_cost = round(latest_kwh * 0.14, 4)
+        # Consommation de la fenêtre = delta compteur (pas le cumulé brut)
+        consumption = max(0.0, (max(kwh_values) - min(kwh_values))) if kwh_values else 0.0
+        cumulative_kwh = max(kwh_values) if kwh_values else 0.0
+        total_co2  = round(consumption * CO2_FACTOR_KG_PER_KWH, 3)
+        total_cost = round(consumption * ELEC_RATE_MAD, 2)
 
-        line_data = {
+        result[line] = {
             "stats_kw": calculate_statistics(kw_values),
             "stats_voltage": calculate_statistics(voltages),
             "stats_pf": calculate_statistics(power_factors),
-            "latest_kwh": round(latest_kwh, 2),
+            "consumption_kwh": round(consumption, 2),
+            "cumulative_kwh": round(cumulative_kwh, 2),
             "total_co2": total_co2,
             "total_cost": total_cost,
             "record_count": len(records),
             "kw_prediction": predict_next(kw_values, 3),
         }
-
-        result[line] = line_data
 
     return result

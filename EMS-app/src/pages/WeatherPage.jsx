@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// Fallback dynamique : aligne WeatherPage sur les autres fichiers API
+// (window.location.hostname) au lieu de "localhost" en dur.
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`;
 
 function formatTime(value) {
   if (!value) return "N/A";
@@ -140,7 +143,7 @@ export default function WeatherPage({ selectedLineLabel = "Production Line 1" })
       <div className="section-title-wrap">
         <h1>Weather</h1>
         <p>
-          Location-based weather — impacts energy consumption ·{" "}
+          Location-based weather — ·{" "}
           {selectedLineLabel}
         </p>
       </div>
@@ -235,7 +238,6 @@ export default function WeatherPage({ selectedLineLabel = "Production Line 1" })
                 <strong style={{ fontSize: "1rem" }}>
                   {current.condition || "Unknown"}
                 </strong>
-                <span>Weather code: {current.weather_code ?? "N/A"}</span>
               </div>
 
               <div className="carbon-card">
@@ -313,7 +315,6 @@ export default function WeatherPage({ selectedLineLabel = "Production Line 1" })
                   color: "var(--text-secondary)",
                 }}
               >
-                💡 Weather data is based on the current browser location.
               </div>
             </section>
 

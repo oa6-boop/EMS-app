@@ -41,7 +41,6 @@ export default function AuditLogs() {
       <div className="overview-header-row">
         <div>
           <h1>Audit Logs</h1>
-          <p className="page-subtitle">Traceability of all sensitive actions — admin only</p>
         </div>
         <span style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
           {logs.length} total records

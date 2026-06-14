@@ -71,7 +71,7 @@ export default function AlarmsEvents() {
       <div className="section-title-wrap">
         <h1>Alarms & Events</h1>
         <p>
-          Flink real-time anomaly detection —{" "}
+          Real-time anomaly detection —{" "}
           <strong style={{ color: activeCount > 0 ? "#e53e3e" : "#38a169" }}>
             {activeCount} active
           </strong>
@@ -94,7 +94,7 @@ export default function AlarmsEvents() {
           <div className="carbon-card">
             <h4>Total Alarms</h4>
             <strong>{alarms.length}</strong>
-            <span>From Flink engine</span>
+            <span>Detected automatically</span>
           </div>
           <div className="carbon-card">
             <h4>🔴 Critical</h4>
@@ -137,7 +137,7 @@ export default function AlarmsEvents() {
       {/* Liste des alarmes */}
       <section className="section-block">
         {loading ? (
-          <div className="info-box">⏳ Loading Flink alarms...</div>
+          <div className="info-box">⏳ Loading alarms...</div>
         ) : filtered.length > 0 ? (
           <div style={{ display:"flex", flexDirection:"column", gap:"0.6rem" }}>
             {filtered.map(alarm => {
@@ -173,13 +173,6 @@ export default function AlarmsEvents() {
                         fontSize:"0.72rem", fontWeight:700,
                       }}>
                         {isActive ? "● ACTIVE" : "✓ RESOLVED"}
-                      </span>
-                      <span style={{
-                        background:"#eff6ff", color:"#2563eb",
-                        borderRadius:"8px", padding:"2px 8px",
-                        fontSize:"0.72rem", fontWeight:600,
-                      }}>
-                        
                       </span>
                     </div>
 
@@ -225,15 +218,13 @@ export default function AlarmsEvents() {
           }}>
             <div style={{ fontSize:"2.5rem", marginBottom:"0.75rem" }}>✅</div>
             <h3>No alarms — All parameters within range</h3>
-            <p>Flink is monitoring voltage and frequency in real-time.</p>
+            <p>The system is monitoring voltage and frequency in real-time.</p>
             <p style={{ fontSize:"0.8rem", marginTop:"0.5rem", color:"#94a3b8" }}>
               Alarms trigger when voltage exits ±5% of 230V or frequency exits ±5% of 50Hz
             </p>
           </div>
         )}
       </section>
-
-     
 
     </div>
   );

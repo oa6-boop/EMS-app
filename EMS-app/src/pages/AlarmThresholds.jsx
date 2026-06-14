@@ -1,7 +1,6 @@
 /**
  * AlarmThresholds.jsx — Page admin pour configurer les seuils d'alarme
- * Les seuils sont sauvegardés dans le backend via /api/thresholds
- * Quand un seuil change → toutes les nouvelles alarmes utilisent la nouvelle valeur
+ * Seuils par défaut alignés sur le moteur de détection de la DataPlatform
  */
 
 import { useEffect, useState } from "react";
@@ -11,12 +10,12 @@ const API_BASE_URL = `http://${hostname}:8000`;
 
 const DEFAULT_THRESHOLDS = {
   high_consumption_kw:   500,
-  voltage_min:           380,
-  voltage_max:           440,
-  frequency_min:         49.0,
-  frequency_max:         51.0,
-  power_factor_min:      0.85,
-  thd_max:               5.0,
+  voltage_min:           210,
+  voltage_max:           250,
+  frequency_min:         49.5,
+  frequency_max:         50.5,
+  power_factor_min:      0.80,
+  thd_max:               8.0,
   peak_demand_warning:   400,
   peak_demand_critical:  500,
 };
@@ -38,8 +37,8 @@ const THRESHOLD_CONFIG = [
     label:       "Voltage Minimum",
     description: "Minimum acceptable voltage (alarm below this)",
     unit:        "V",
-    min:         300,
-    max:         415,
+    min:         180,
+    max:         240,
     step:        5,
     severity:    "high",
     icon:        "🔌",
@@ -49,7 +48,7 @@ const THRESHOLD_CONFIG = [
     label:       "Voltage Maximum",
     description: "Maximum acceptable voltage (alarm above this)",
     unit:        "V",
-    min:         415,
+    min:         210,
     max:         500,
     step:        5,
     severity:    "high",
@@ -91,7 +90,7 @@ const THRESHOLD_CONFIG = [
   {
     key:         "thd_max",
     label:       "THD Maximum",
-    description: "Maximum allowed Total Harmonic Distortion (IEC 61000 = 5%)",
+    description: "Maximum allowed Total Harmonic Distortion (threshold = 8%)",
     unit:        "%",
     min:         1.0,
     max:         20.0,
@@ -131,7 +130,6 @@ export default function AlarmThresholds() {
   const [success,    setSuccess]    = useState("");
   const [error,      setError]      = useState("");
 
-  // Charger les seuils depuis le backend
   useEffect(() => {
     const load = async () => {
       try {
@@ -146,7 +144,6 @@ export default function AlarmThresholds() {
           setSaved(merged);
         }
       } catch {
-        // Utiliser les valeurs par défaut si le backend ne répond pas
         setSaved(DEFAULT_THRESHOLDS);
       } finally {
         setLoading(false);
@@ -333,7 +330,6 @@ export default function AlarmThresholds() {
                   padding:      "1.25rem",
                 }}
               >
-                {/* Header */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
                   <div>
                     <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700 }}>
@@ -358,7 +354,6 @@ export default function AlarmThresholds() {
                   </span>
                 </div>
 
-                {/* Valeur actuelle */}
                 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.75rem" }}>
                   <input
                     type="number"
@@ -401,7 +396,6 @@ export default function AlarmThresholds() {
                   )}
                 </div>
 
-                {/* Slider */}
                 <input
                   type="range"
                   min={cfg.min}
@@ -412,7 +406,6 @@ export default function AlarmThresholds() {
                   style={{ width: "100%", accentColor: colors.badge, cursor: "pointer" }}
                 />
 
-                {/* Min / Max labels */}
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
                   <span>Min: {cfg.min}{cfg.unit}</span>
                   <span>Default: {DEFAULT_THRESHOLDS[cfg.key]}{cfg.unit}</span>
@@ -424,7 +417,6 @@ export default function AlarmThresholds() {
         </div>
       </section>
 
-          
     </div>
   );
 }

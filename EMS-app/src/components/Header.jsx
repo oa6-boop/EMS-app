@@ -8,7 +8,7 @@ export default function Header({
   onWeatherClick,
 
   structure = [],            // arbre Plant → Line → Zone → Equipment
-  selection = { plant: "", line: "", zone: "" },
+  selection = { plant: "", line: "", zone: "", equipment: "", tag: "" },
   onSelectionChange,
 
   energyOptions = [],
@@ -32,7 +32,7 @@ export default function Header({
     localStorage.setItem("ems_dark_mode", String(isDark));
   }, [isDark]);
 
-  const { plant, line, zone } = selection;
+  const { plant, line, zone, equipment, tag } = selection;
 
   // Options en cascade
   const plants = useMemo(() => structure.map((p) => p.plant), [structure]);
@@ -49,6 +49,15 @@ export default function Header({
     const l = p?.lines.find((x) => x.line === line);
     return l ? l.zones.map((z) => z.zone) : [];
   }, [structure, plant, line]);
+
+  // Niveau 4 : equipements de la zone selectionnee
+  const equipments = useMemo(() => {
+    if (!plant || !line || !zone) return [];
+    const p = structure.find((x) => x.plant === plant);
+    const l = p?.lines.find((x) => x.line === line);
+    const z = l?.zones.find((x) => x.zone === zone);
+    return z ? z.equipment : [];
+  }, [structure, plant, line, zone]);
 
   const equipmentCount = useMemo(() => {
     const set = new Set();
@@ -73,12 +82,20 @@ export default function Header({
     : "?";
 
   // Handlers cascadants
-  const handlePlant = (p) => onSelectionChange?.({ plant: p, line: "", zone: "" });
-  const handleLine = (l) => onSelectionChange?.({ plant, line: l, zone: "" });
-  const handleZone = (z) => onSelectionChange?.({ plant, line, zone: z });
-  const clearAll = () => onSelectionChange?.({ plant: "", line: "", zone: "" });
+  const handlePlant = (p) =>
+    onSelectionChange?.({ plant: p, line: "", zone: "", equipment: "", tag });
+  const handleLine = (l) =>
+    onSelectionChange?.({ plant, line: l, zone: "", equipment: "", tag });
+  const handleZone = (z) =>
+    onSelectionChange?.({ plant, line, zone: z, equipment: "", tag });
+  const handleEquipment = (e) =>
+    onSelectionChange?.({ plant, line, zone, equipment: e, tag });
+  const clearAll = () =>
+    onSelectionChange?.({ plant: "", line: "", zone: "", equipment: "", tag: "" });
 
-  const breadcrumb = [plant || "All Plants", line, zone].filter(Boolean).join(" · ");
+  const breadcrumb = [plant || "All Plants", line, zone, equipment]
+    .filter(Boolean)
+    .join(" · ");
 
   const DropPanel = ({ children, onClose, title }) => (
     <div className="filter-panel" style={{ minWidth: "260px" }}>
@@ -191,6 +208,30 @@ export default function Header({
                     <Row group="zone" checked={zone === ""} onChange={() => handleZone("")} label="All Zones" />
                     {zones.map((z) => (
                       <Row key={z} group="zone" checked={zone === z} onChange={() => handleZone(z)} label={z} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. EQUIPMENT */}
+              {zone && equipments.length > 0 && (
+                <div style={{ marginBottom: "0.8rem" }}>
+                  <SectionTitle>4. Equipment</SectionTitle>
+                  <div className="filter-option-list">
+                    <Row
+                      group="equipment"
+                      checked={equipment === ""}
+                      onChange={() => handleEquipment("")}
+                      label="All Equipment"
+                    />
+                    {equipments.map((e) => (
+                      <Row
+                        key={e}
+                        group="equipment"
+                        checked={equipment === e}
+                        onChange={() => handleEquipment(e)}
+                        label={e}
+                      />
                     ))}
                   </div>
                 </div>

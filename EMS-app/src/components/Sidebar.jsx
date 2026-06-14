@@ -57,6 +57,8 @@ const ROLE_PAGES = {
   operator: [
     { key: "dashboard",   label: "Dashboard Overview",   icon: BarChart3   },
     { key: "equipment",   label: "Equipment Status",     icon: Settings    },
+        { key: "alarms",      label: "Alarms & Events",      icon: AlertTriangle   },
+
     { key: "sld",         label: "SLD Monitoring",          icon: Activity    },
     { key: "weather",     label: "Weather",              icon: CloudSun    },
     { key: "messages",    label: "Messages",             icon: MessagesSquare, badge: "message" },

@@ -46,23 +46,62 @@ import {
 } from "./api/authApi";
 
 import { fetchLatestMessageNotifications } from "./api/chatApi";
+import { logAudit } from "./api/auditApi";
 
 const PAGES_BY_ROLE = {
   admin: [
-    "dashboard", "industry", "realtime", "equipment", "power", "carbon",
-    "forecasting", "reports", "alarms", "history", "maintenance", "prices",
-    "weather", "messages", "profile", "users", "thresholds", "urgent", "audit", "sld",
+    "dashboard",
+    "industry",
+    "realtime",
+    "equipment",
+    "power",
+    "carbon",
+    "forecasting",
+    "reports",
+    "alarms",
+    "history",
+    "maintenance",
+    "prices",
+    "weather",
+    "messages",
+    "profile",
+    "users",
+    "thresholds",
+    "urgent",
+    "audit",
+    "sld",
   ],
   management: [
-    "dashboard", "industry", "carbon", "forecasting", "reports", "prices",
-    "weather", "messages", "profile",
+    "dashboard",
+    "industry",
+    "carbon",
+    "forecasting",
+    "reports",
+    "prices",
+    "weather",
+    "messages",
+    "profile",
   ],
   maintenance: [
-    "realtime", "equipment", "power", "alarms", "history", "thresholds",
-    "maintenance", "weather", "messages", "profile",
+    "realtime",
+    "equipment",
+    "power",
+    "alarms",
+    "history",
+    "thresholds",
+    "maintenance",
+    "weather",
+    "messages",
+    "profile",
   ],
   operator: [
-    "dashboard", "equipment", "sld", "weather", "messages", "profile",
+    "dashboard",
+    "equipment",
+    "alarms",
+    "sld",
+    "weather",
+    "messages",
+    "profile",
   ],
 };
 
@@ -74,10 +113,26 @@ const DEFAULT_PAGE = {
 };
 
 const VALID_PAGES = [
-  "dashboard", "industry", "realtime", "equipment", "power", "carbon",
-  "forecasting", "reports", "alarms", "weather", "profile", "users",
-  "urgent", "audit", "messages", "history", "thresholds", "maintenance",
-  "prices", "sld",
+  "dashboard",
+  "industry",
+  "realtime",
+  "equipment",
+  "power",
+  "carbon",
+  "forecasting",
+  "reports",
+  "alarms",
+  "weather",
+  "profile",
+  "users",
+  "urgent",
+  "audit",
+  "messages",
+  "history",
+  "thresholds",
+  "maintenance",
+  "prices",
+  "sld",
 ];
 
 function getSavedPage() {
@@ -87,6 +142,7 @@ function getSavedPage() {
   } catch {
     // ignore
   }
+
   return "dashboard";
 }
 
@@ -100,18 +156,41 @@ function isSameValue(a, b) {
 
 function buildEnergyDefaults(name = "") {
   const l = name.toLowerCase();
-  if (l.includes("electric") || l.includes("électric")) return { min: 0, max: 500, step: 10 };
-  if (l.includes("kwh")) return { min: 0, max: 500, step: 10 };
-  if (l.includes("co2") || l.includes("carbon")) return { min: 0, max: 200, step: 1 };
-  if (l.includes("eau") || l.includes("water")) return { min: 0, max: 200, step: 5 };
-  if (l.includes("vapeur") || l.includes("steam")) return { min: 0, max: 400, step: 10 };
-  if (l.includes("solaire") || l.includes("solar")) return { min: 0, max: 300, step: 5 };
-  if (l.includes("fuel") || l.includes("carburant")) return { min: 0, max: 500, step: 10 };
+
+  if (l.includes("electric") || l.includes("électric")) {
+    return { min: 0, max: 500, step: 10 };
+  }
+
+  if (l.includes("kwh")) {
+    return { min: 0, max: 500, step: 10 };
+  }
+
+  if (l.includes("co2") || l.includes("carbon")) {
+    return { min: 0, max: 200, step: 1 };
+  }
+
+  if (l.includes("eau") || l.includes("water")) {
+    return { min: 0, max: 200, step: 5 };
+  }
+
+  if (l.includes("vapeur") || l.includes("steam")) {
+    return { min: 0, max: 400, step: 10 };
+  }
+
+  if (l.includes("solaire") || l.includes("solar")) {
+    return { min: 0, max: 300, step: 5 };
+  }
+
+  if (l.includes("fuel") || l.includes("carburant")) {
+    return { min: 0, max: 500, step: 10 };
+  }
+
   return { min: 0, max: 1000, step: 10 };
 }
 
 function createChart(value, max) {
   const ratio = Math.max(10, Math.min(95, (value / (max || 500)) * 100));
+
   return Array.from({ length: 10 }, (_, i) =>
     Math.max(5, Math.min(100, ratio + ((i % 3) - 1) * 3))
   );
@@ -124,8 +203,18 @@ function convertEnergies(lineData = [], lineLabel = "") {
 
     const plant = item.plant || item.plant_name || item.rawData?.plant || "Plant 1";
     const zone = item.zone || item.area || item.area_name || item.rawData?.area || "Zone A";
-    const equipment = item.equipment || item.equipment_name || item.rawData?.equipment || "Equipment";
+    const equipment =
+      item.equipment || item.equipment_name || item.rawData?.equipment || "Equipment";
     const line = item.production_line || item.line || lineLabel || "Production Line 1";
+
+    // Tags equipement : chaine "a,b,c" (backend) ou liste -> tableau normalise
+    const rawTags = item.tags ?? item.labels ?? item.rawData?.tags ?? "";
+    const tags = Array.isArray(rawTags)
+      ? rawTags.map((t) => String(t).trim().toLowerCase()).filter(Boolean)
+      : String(rawTags || "")
+          .split(",")
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean);
 
     return {
       id: item.id || index + 1,
@@ -144,6 +233,7 @@ function convertEnergies(lineData = [], lineLabel = "") {
       zone,
       area: zone,
       equipment,
+      tags,
       rawData: {
         voltage: item.voltage,
         frequency: item.frequency,
@@ -166,44 +256,81 @@ function buildElectricalData(energies) {
   });
 
   if (!electricEnergies.length) {
-    return { tension: 230, frequence: 50, facteurPuissance: 0.9, thd: 3.2 };
+    return {
+      tension: 230,
+      frequence: 50,
+      facteurPuissance: 0.9,
+      thd: 3.2,
+    };
   }
 
   const avg = (arr, def) =>
     arr.length ? arr.reduce((s, v) => s + Number(v || 0), 0) / arr.length : def;
 
   return {
-    tension: parseFloat(avg(electricEnergies.map((e) => e.rawData?.voltage).filter((v) => v != null), 230).toFixed(1)),
-    frequence: parseFloat(avg(electricEnergies.map((e) => e.rawData?.frequency).filter((v) => v != null), 50).toFixed(2)),
-    facteurPuissance: parseFloat(avg(electricEnergies.map((e) => e.rawData?.power_factor).filter((v) => v != null), 0.9).toFixed(3)),
-    thd: parseFloat(avg(electricEnergies.map((e) => e.rawData?.thd).filter((v) => v != null), 3.2).toFixed(2)),
+    tension: parseFloat(
+      avg(
+        electricEnergies.map((e) => e.rawData?.voltage).filter((v) => v != null),
+        230
+      ).toFixed(1)
+    ),
+    frequence: parseFloat(
+      avg(
+        electricEnergies.map((e) => e.rawData?.frequency).filter((v) => v != null),
+        50
+      ).toFixed(2)
+    ),
+    facteurPuissance: parseFloat(
+      avg(
+        electricEnergies.map((e) => e.rawData?.power_factor).filter((v) => v != null),
+        0.9
+      ).toFixed(3)
+    ),
+    thd: parseFloat(
+      avg(
+        electricEnergies.map((e) => e.rawData?.thd).filter((v) => v != null),
+        3.2
+      ).toFixed(2)
+    ),
   };
 }
 
-// ── Construit l'arbre Plant → Line → Zone → Equipment depuis les données ──────
 function buildStructure(energies) {
   const tree = {};
+
   energies.forEach((e) => {
     const plant = e.plant || "Plant 1";
     const line = e.line || "Production Line 1";
     const zone = e.zone || e.area || "Zone A";
     const equipment = e.equipment || "Equipment";
+
     tree[plant] = tree[plant] || {};
     tree[plant][line] = tree[plant][line] || {};
     tree[plant][line][zone] = tree[plant][line][zone] || new Set();
     tree[plant][line][zone].add(equipment);
   });
 
-  return Object.keys(tree).sort().map((plant) => ({
-    plant,
-    lines: Object.keys(tree[plant]).sort().map((line) => ({
-      line,
-      zones: Object.keys(tree[plant][line]).sort().map((zone) => ({
-        zone,
-        equipment: [...tree[plant][line][zone]].sort(),
-      })),
-    })),
-  }));
+  return Object.keys(tree)
+    .sort()
+    .map((plant) => ({
+      plant,
+      lines: Object.keys(tree[plant])
+        .sort()
+        .map((line) => ({
+          line,
+          zones: Object.keys(tree[plant][line])
+            .sort()
+            .map((zone) => ({
+              zone,
+              equipment: [...tree[plant][line][zone]].sort(),
+            })),
+        })),
+    }));
+}
+
+function isCumulativeEnergy(e) {
+  const n = (e.name || "").toLowerCase();
+  return n.includes("kwh") || e.unit === "kWh";
 }
 
 function App() {
@@ -211,8 +338,14 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toastMessage, setToastMessage] = useState("");
 
-  // Filtre hiérarchique plant-first
-  const [selection, setSelection] = useState({ plant: "", line: "", zone: "" });
+  const [selection, setSelection] = useState({
+    plant: "",
+    line: "",
+    zone: "",
+    equipment: "",
+    tag: "",
+  });
+
   const [selectedEnergyNames, setSelectedEnergyNames] = useState([]);
 
   const [backendSummary, setBackendSummary] = useState({});
@@ -235,7 +368,10 @@ function App() {
   const initializedRef = useRef(false);
 
   const setActivePage = useCallback((page) => {
-    if (VALID_PAGES.includes(page)) localStorage.setItem("ems_active_page", page);
+    if (VALID_PAGES.includes(page)) {
+      localStorage.setItem("ems_active_page", page);
+    }
+
     setActivePageState(page);
   }, []);
 
@@ -252,7 +388,6 @@ function App() {
 
   const { connected: wsConnected } = useWebSocket(handleWsMessage);
 
-  // Polling télémétrie
   useEffect(() => {
     const load = async () => {
       try {
@@ -265,41 +400,51 @@ function App() {
         setLoadingData(false);
       }
     };
+
     load();
+
     const intervalId = setInterval(load, 5000);
+
     return () => clearInterval(intervalId);
   }, []);
 
-  // ── Toutes les énergies (toutes lignes confondues) ──────────────────────────
   const allEnergies = useMemo(() => {
     const out = [];
+
     Object.entries(backendSummary).forEach(([lineLabel, lineData]) => {
-      const energies = convertEnergies(lineData?.energies || [], lineLabel);
-      energies.forEach((e) => out.push(e));
+      convertEnergies(lineData?.energies || [], lineLabel).forEach((e) => out.push(e));
     });
+
     return out;
   }, [backendSummary]);
 
-  // ── Arbre hiérarchique auto-découvert ───────────────────────────────────────
   const structure = useMemo(() => buildStructure(allEnergies), [allEnergies]);
 
-  // Réinitialiser une sélection devenue invalide
   useEffect(() => {
-    if (selection.plant && !structure.some((p) => isSameValue(p.plant, selection.plant))) {
-      setSelection({ plant: "", line: "", zone: "" });
+    if (
+      selection.plant &&
+      !structure.some((p) => isSameValue(p.plant, selection.plant))
+    ) {
+      setSelection({
+        plant: "",
+        line: "",
+        zone: "",
+        equipment: "",
+        tag: "",
+      });
     }
   }, [structure, selection.plant]);
 
-  // ── Ligne active (pour pages qui ont besoin d'un label de ligne) ────────────
   const activeLineLabel = useMemo(() => {
     if (selection.line) return selection.line;
+
     const firstPlant = selection.plant
       ? structure.find((p) => isSameValue(p.plant, selection.plant))
       : structure[0];
+
     return firstPlant?.lines?.[0]?.line || "Production Line 1";
   }, [selection, structure]);
 
-  // Historiques (par ligne active)
   useEffect(() => {
     const load = async () => {
       try {
@@ -309,8 +454,11 @@ function App() {
         // ignore
       }
     };
+
     load();
+
     const intervalId = setInterval(load, 10000);
+
     return () => clearInterval(intervalId);
   }, [activeLineLabel]);
 
@@ -323,48 +471,60 @@ function App() {
         // ignore
       }
     };
+
     load();
+
     const intervalId = setInterval(load, 10000);
+
     return () => clearInterval(intervalId);
   }, [activeLineLabel]);
 
-  // Users
   useEffect(() => {
     const load = async () => {
       try {
         const token = localStorage.getItem("token");
+
         if (!token || user?.role !== "admin") return;
+
         const response = await fetchUsers(token);
-        setUsers(response.map((item) => ({
-          id: item.id,
-          firstName: item.first_name || item.firstName,
-          lastName: item.last_name || item.lastName,
-          email: item.email,
-          password: "",
-          role: item.role,
-          profileImage: item.profile_image || "",
-        })));
+
+        setUsers(
+          response.map((item) => ({
+            id: item.id,
+            firstName: item.first_name || item.firstName,
+            lastName: item.last_name || item.lastName,
+            email: item.email,
+            password: "",
+            role: item.role,
+            profileImage: item.profile_image || "",
+          }))
+        );
       } catch {
         // ignore
       }
     };
+
     load();
   }, [isLoggedIn, user?.role]);
 
-  // Urgent messages
   useEffect(() => {
     const load = async () => {
       try {
         const token = localStorage.getItem("token");
+
         if (!token || user?.role !== "admin") return;
+
         const [messages, countResponse] = await Promise.all([
           fetchUrgentMessages(token),
           fetchUrgentMessagesCount(token),
         ]);
+
         const pendingCount = countResponse.pendingCount || 0;
+
         if (initializedRef.current && pendingCount > lastUrgentRef.current) {
           setToastMessage(`New urgent request (${pendingCount} pending)`);
         }
+
         lastUrgentRef.current = pendingCount;
         setUrgentMessages(messages || []);
         setUrgentCount(pendingCount);
@@ -372,18 +532,23 @@ function App() {
         // ignore
       }
     };
+
     load();
+
     const intervalId = setInterval(load, 5000);
+
     return () => clearInterval(intervalId);
   }, [isLoggedIn, user?.role]);
 
-  // Restore session
   useEffect(() => {
     const restore = async () => {
       const token = localStorage.getItem("token");
+
       if (!token) return;
+
       try {
         const currentUser = await getCurrentUser(token);
+
         setUser({
           id: currentUser.id,
           firstName: currentUser.firstName,
@@ -392,82 +557,156 @@ function App() {
           role: currentUser.role,
           profileImage: currentUser.profileImage || "",
         });
+
         setIsLoggedIn(true);
       } catch {
         localStorage.removeItem("token");
       }
     };
+
     restore();
   }, []);
 
-  // Notifications messages
   useEffect(() => {
     if (!isLoggedIn || !user) return;
+
     const poll = async () => {
       try {
         const token = localStorage.getItem("token");
+
         if (!token) return;
+
         const results = await fetchLatestMessageNotifications(token);
+
         let unseen = 0;
         let toast = "";
+
         results.forEach((item) => {
           const lastMessage = item.lastMessage;
+
           if (!lastMessage) return;
+
           const messageId = String(lastMessage.id);
           const isOwnMessage = lastMessage.sender_id === user?.id;
+
           if (!initializedRef.current) {
             lastSeenRef.current.add(messageId);
             return;
           }
+
           if (!lastSeenRef.current.has(messageId) && !isOwnMessage) {
             unseen += 1;
             lastSeenRef.current.add(messageId);
             toast = `New message: ${lastMessage.sender_name}`;
           }
         });
+
         if (unseen > 0) {
           setMessageNotifCount((p) => p + unseen);
           setToastMessage(toast || "New message received");
         }
+
         if (!initializedRef.current) initializedRef.current = true;
       } catch {
         // ignore
       }
     };
+
     initializedRef.current = false;
     poll();
+
     const intervalId = setInterval(poll, 4000);
+
     return () => clearInterval(intervalId);
   }, [isLoggedIn, user?.id, user]);
 
   useEffect(() => {
-    if (activePage === "messages") setMessageNotifCount(0);
+    if (activePage === "messages") {
+      setMessageNotifCount(0);
+    }
   }, [activePage]);
 
   useEffect(() => {
+    if (!isLoggedIn || !user) return;
+
+    logAudit(
+      "PAGE_VIEW",
+      `${user.firstName} ${user.lastName} a consulté la page "${activePage}"`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, isLoggedIn]);
+
+  useEffect(() => {
     if (!toastMessage) return;
+
     const timeoutId = setTimeout(() => setToastMessage(""), 3500);
+
     return () => clearTimeout(timeoutId);
   }, [toastMessage]);
 
-  // ── Filtrage hiérarchique ───────────────────────────────────────────────────
   const scopedEnergies = useMemo(() => {
     return allEnergies.filter((e) => {
       if (selection.plant && !isSameValue(e.plant, selection.plant)) return false;
       if (selection.line && !isSameValue(e.line, selection.line)) return false;
       if (selection.zone && !isSameValue(e.zone, selection.zone)) return false;
+
+      // Niveau 4 de la hierarchie : un equipement precis
+      if (selection.equipment && !isSameValue(e.equipment, selection.equipment))
+        return false;
+
+      // Filtre par tag : ne garder que les equipements portant ce tag
+      if (selection.tag && !(e.tags || []).includes(selection.tag)) return false;
+
       return true;
     });
   }, [allEnergies, selection]);
 
-  const availableNames = useMemo(() => {
-    return [...new Set(scopedEnergies.map((e) => e.name))];
+  // Tags disponibles dans le perimetre Plant/Line/Zone courant
+  // (avant filtre tag/equipment, pour que les chips restent visibles)
+  const availableTags = useMemo(() => {
+    const set = new Set();
+
+    allEnergies.forEach((e) => {
+      if (selection.plant && !isSameValue(e.plant, selection.plant)) return;
+      if (selection.line && !isSameValue(e.line, selection.line)) return;
+      if (selection.zone && !isSameValue(e.zone, selection.zone)) return;
+
+      (e.tags || []).forEach((t) => set.add(t));
+    });
+
+    return [...set].sort();
+  }, [allEnergies, selection.plant, selection.line, selection.zone]);
+
+  const handleTagSelect = useCallback((tag) => {
+    setSelection((prev) => ({ ...prev, tag: tag || "" }));
+  }, []);
+
+  // Si le tag actif disparait des donnees, on le retire
+  useEffect(() => {
+    if (selection.tag && !availableTags.includes(selection.tag)) {
+      setSelection((prev) => ({ ...prev, tag: "" }));
+    }
+  }, [availableTags, selection.tag]);
+
+  const cumulativeKwh = useMemo(() => {
+    return scopedEnergies
+      .filter(isCumulativeEnergy)
+      .reduce((s, e) => s + Number(e.value || 0), 0);
   }, [scopedEnergies]);
 
+  const consumptionEnergies = useMemo(() => {
+    return scopedEnergies.filter((e) => !isCumulativeEnergy(e));
+  }, [scopedEnergies]);
+
+  const availableNames = useMemo(() => {
+    return [...new Set(consumptionEnergies.map((e) => e.name))];
+  }, [consumptionEnergies]);
+
   const visibleEnergies = useMemo(() => {
-    if (!selectedEnergyNames.length) return scopedEnergies;
-    return scopedEnergies.filter((e) => selectedEnergyNames.includes(e.name));
-  }, [scopedEnergies, selectedEnergyNames]);
+    if (!selectedEnergyNames.length) return consumptionEnergies;
+
+    return consumptionEnergies.filter((e) => selectedEnergyNames.includes(e.name));
+  }, [consumptionEnergies, selectedEnergyNames]);
 
   const visibleData = useMemo(() => buildElectricalData(visibleEnergies), [visibleEnergies]);
 
@@ -477,7 +716,6 @@ function App() {
     );
   }, [availableNames]);
 
-  // ── KPIs calculés depuis les données filtrées (100% DataPlatform) ───────────
   const displayedTotalCost = useMemo(() => {
     return visibleEnergies.reduce((s, e) => s + Number(e.cost || 0), 0);
   }, [visibleEnergies]);
@@ -493,21 +731,27 @@ function App() {
         return e.unit === "kW" || name.includes("electric") || name.includes("électric");
       })
       .map((e) => Number(e.value || 0));
+
     if (!electricValues.length) return 0;
+
     return Math.max(...electricValues);
   }, [visibleEnergies]);
 
   const displayedAvgVoltage = visibleEnergies.length ? visibleData.tension : null;
-  const displayedAvgPowerFactor = visibleEnergies.length ? visibleData.facteurPuissance : null;
+  const displayedAvgPowerFactor = visibleEnergies.length
+    ? visibleData.facteurPuissance
+    : null;
 
-  // ── Auth handlers ───────────────────────────────────────────────────────────
   const handleLogin = async (email, password) => {
     try {
       const tokenResponse = await loginUser(email, password);
       const token = tokenResponse.access_token;
+
       localStorage.setItem("token", token);
+
       const currentUser = await getCurrentUser(token);
       const role = currentUser.role || "maintenance";
+
       setUser({
         id: currentUser.id,
         firstName: currentUser.firstName,
@@ -516,6 +760,7 @@ function App() {
         role,
         profileImage: currentUser.profileImage || "",
       });
+
       setIsLoggedIn(true);
       setActivePage(DEFAULT_PAGE[role] || "dashboard");
     } catch (error) {
@@ -524,11 +769,21 @@ function App() {
   };
 
   const handleLogout = () => {
+    if (user) {
+      logAudit("LOGOUT", `${user.firstName} ${user.lastName} s'est déconnecté`);
+    }
+
     localStorage.removeItem("token");
     setIsLoggedIn(false);
     setUser(null);
     setBackendSummary({});
-    setSelection({ plant: "", line: "", zone: "" });
+    setSelection({
+      plant: "",
+      line: "",
+      zone: "",
+      equipment: "",
+      tag: "",
+    });
     setSelectedEnergyNames([]);
     setActivePage("dashboard");
   };
@@ -546,17 +801,23 @@ function App() {
   const handleCreateUser = async (userData) => {
     try {
       const token = localStorage.getItem("token");
+
       await createUser(userData, token);
+
       const response = await fetchUsers(token);
-      setUsers(response.map((item) => ({
-        id: item.id,
-        firstName: item.first_name || item.firstName,
-        lastName: item.last_name || item.lastName,
-        email: item.email,
-        password: "",
-        role: item.role,
-        profileImage: item.profile_image || "",
-      })));
+
+      setUsers(
+        response.map((item) => ({
+          id: item.id,
+          firstName: item.first_name || item.firstName,
+          lastName: item.last_name || item.lastName,
+          email: item.email,
+          password: "",
+          role: item.role,
+          profileImage: item.profile_image || "",
+        }))
+      );
+
       setToastMessage("User created successfully");
     } catch (error) {
       throw new Error(error.message || "Failed to create user");
@@ -566,7 +827,9 @@ function App() {
   const handleDeleteUser = async (id) => {
     try {
       const token = localStorage.getItem("token");
+
       await deleteUser(id, token);
+
       setUsers((previous) => previous.filter((item) => item.id !== id));
       setToastMessage("User deleted");
     } catch (error) {
@@ -577,10 +840,13 @@ function App() {
   const handleUpdateRole = async (id, role) => {
     try {
       const token = localStorage.getItem("token");
+
       await updateUserRole(id, role, token);
+
       setUsers((previous) =>
         previous.map((item) => (item.id === id ? { ...item, role } : item))
       );
+
       setToastMessage("Role updated");
     } catch (error) {
       throw new Error(error.message || "Failed to update role");
@@ -590,6 +856,7 @@ function App() {
   const handleRegeneratePassword = async (requestId) => {
     try {
       const token = localStorage.getItem("token");
+
       await regenerateUserPassword(requestId, token);
       setToastMessage("Password regenerated");
     } catch (error) {
@@ -612,9 +879,14 @@ function App() {
     selectedLineLabel: activeLineLabel,
     selectedPlant: selection.plant || "all",
     selectedZone: selection.zone || "all",
+    selectedEquipment: selection.equipment || "all",
+    availableTags,
+    selectedTag: selection.tag || "",
+    onTagSelect: handleTagSelect,
     totalCost: displayedTotalCost,
     peakKw: displayedPeakKw,
     totalCo2: displayedTotalCo2,
+    cumulativeKwh,
     avgVoltage: displayedAvgVoltage,
     avgPowerFactor: displayedAvgPowerFactor,
     backendSummary,
@@ -622,6 +894,7 @@ function App() {
 
   const renderPage = () => {
     const role = user?.role;
+
     if (role && !PAGES_BY_ROLE[role]?.includes(activePage)) {
       return <Dashboard {...shared} />;
     }
@@ -647,10 +920,14 @@ function App() {
       case "equipment":
         return (
           <EquipmentStatus
-            energies={visibleEnergies}
+            energies={scopedEnergies}
             selectedLineLabel={activeLineLabel}
             selectedPlant={selection.plant || "all"}
             selectedZone={selection.zone || "all"}
+            selectedEquipment={selection.equipment || "all"}
+            availableTags={availableTags}
+            selectedTag={selection.tag || ""}
+            onTagSelect={handleTagSelect}
           />
         );
 
@@ -719,6 +996,7 @@ function App() {
             energies={visibleEnergies}
             selectedLineLabel={activeLineLabel}
             peakKw={displayedPeakKw}
+            cumulativeKwh={cumulativeKwh}
           />
         );
 
@@ -748,19 +1026,57 @@ function App() {
 
       case "sld":
         return (
-          <div style={{ padding: "20px", height: "calc(100vh - 140px)" }}>
-            <div style={{ marginBottom: "12px" }}>
-              <h1 style={{ margin: 0, fontSize: "1.4rem" }}>SLD Display</h1>
-              <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "0.9rem" }}>
-                Live display — view only
-              </p>
+          <div style={{ padding: "20px" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "12px",
+              }}
+            >
+              <div>
+                <h1 style={{ margin: 0, fontSize: "1.4rem" }}>SLD Display</h1>
+                <p
+                  style={{
+                    margin: "4px 0 0",
+                    color: "#64748b",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  Single Line Diagram — view only
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const frame = document.getElementById("sld-frame");
+
+                  if (frame?.requestFullscreen) frame.requestFullscreen();
+                }}
+                style={{
+                  background: "#2563eb",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "8px",
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: "0.85rem",
+                }}
+              >
+                ⛶ Fullscreen
+              </button>
             </div>
+
             <iframe
+              id="sld-frame"
               src="/sld.html"
               title="SLD Monitoring"
               style={{
                 width: "100%",
-                height: "100%",
+                height: "calc(100vh - 180px)",
                 border: "1px solid var(--border-color, #e2e8f0)",
                 borderRadius: "12px",
                 background: "#fff",
@@ -843,9 +1159,7 @@ function App() {
 
         {toastMessage && <div className="toast">{toastMessage}</div>}
 
-        {loadingData && (
-          <div className="info-box">⏳ Loading from DataPlatform...</div>
-        )}
+        {loadingData && <div className="info-box">⏳ Loading from DataPlatform...</div>}
 
         {backendError && <div className="alarm-item">⚠ {backendError}</div>}
 

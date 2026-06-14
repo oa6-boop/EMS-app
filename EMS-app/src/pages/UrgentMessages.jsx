@@ -30,7 +30,6 @@ export default function UrgentMessages({ requests = [], onRegeneratePassword }) 
         <div>
           <h1>Urgent Messages — Password Resets</h1>
           <p className="page-subtitle">
-            Manage forgot-password requests from users — Admin only
           </p>
         </div>
         {pending.length > 0 && (

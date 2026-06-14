@@ -2626,6 +2626,8 @@ html,body{height:100%;width:100%;background:var(--bg-base);color:var(--text-prim
   .eq-motor-body.off{stroke:#3d4f60}
   .eq-motor-body.fault{stroke:#f84960;animation:blink .5s step-end infinite}
   .eq-conveyor{fill:none;stroke:#4a9eff;stroke-width:2;vector-effect:non-scaling-stroke}
+  .eq-conveyor-green{fill:none;stroke:#a8c66c;stroke-width:2;vector-effect:non-scaling-stroke}
+  .eq-feeder{fill:none;stroke:#f0c040;stroke-width:2;vector-effect:non-scaling-stroke}
   .eq-conveyor.off{stroke:#3d4f60}
   .eq-cap{fill:none;stroke:#00d4d8;stroke-width:2.5;vector-effect:non-scaling-stroke}
   .eq-cap.off{stroke:#3d4f60}
@@ -5853,6 +5855,13 @@ html,body{height:100%;width:100%;background:var(--bg-base);color:var(--text-prim
 </g>
 </g>
 <g id="sld-interactive">
+
+  <!-- ── Main HV Busbar — spans all CBs ── -->
+  <line id="main-busbar"
+        x1="530" y1="770" x2="5724" y2="770"
+        stroke="#b0a898" stroke-width="3" opacity="0.5"
+        vector-effect="non-scaling-stroke"
+        stroke-linecap="round"/>
 <rect x="560" y="740" width="60" height="60" rx="6" class="breaker-hit" id="cb-l1" data-name="CB-L1" data-tr="tr-l1"/>
 <rect x="780" y="740" width="60" height="60" rx="6" class="breaker-hit" id="cb-l2" data-name="CB-L2" data-tr="tr-l2"/>
 <rect x="1000" y="740" width="60" height="60" rx="6" class="breaker-hit" id="cb-l3" data-name="CB-L3" data-tr="tr-l3"/>
@@ -5970,22 +5979,22 @@ html,body{height:100%;width:100%;background:var(--bg-base);color:var(--text-prim
     <!-- Conveyor symbol: two rollers + belt outline -->
     <!-- Left roller -->
     <circle id="eq-cv1-r1" cx="2748" cy="1460" r="14"
-          class="eq-conveyor" vector-effect="non-scaling-stroke"/>
+          class="eq-conveyor-green" vector-effect="non-scaling-stroke"/>
     <!-- Right roller -->
     <circle id="eq-cv1-r2" cx="2808" cy="1460" r="14"
-          class="eq-conveyor" vector-effect="non-scaling-stroke"/>
+          class="eq-conveyor-green" vector-effect="non-scaling-stroke"/>
     <!-- Belt top line -->
     <line id="eq-cv1-top" x1="2748" y1="1446" x2="2808" y2="1446"
-          class="eq-conveyor" vector-effect="non-scaling-stroke"/>
+          class="eq-conveyor-green" vector-effect="non-scaling-stroke"/>
     <!-- Belt bottom line -->
     <line id="eq-cv1-bot" x1="2748" y1="1474" x2="2808" y2="1474"
-          class="eq-conveyor" vector-effect="non-scaling-stroke"/>
+          class="eq-conveyor-green" vector-effect="non-scaling-stroke"/>
     <!-- Feed line from iso to belt -->
     <line id="eq-cv1-line3" x1="2778" y1="1445" x2="2778" y2="1446"
           class="eq-line" vector-effect="non-scaling-stroke"/>
     <!-- Direction arrow on belt -->
     <polygon id="eq-cv1-arrow" points="2772,1453 2784,1460 2772,1467"
-          fill="#4a9eff" opacity="0.7" vector-effect="non-scaling-stroke"/>
+          fill="#a8c66c" opacity="0.7" vector-effect="non-scaling-stroke"/>
     <text x="2778" y="1498" text-anchor="middle"
           style="font-family:monospace;font-size:22px;fill:#78909c">CV1</text>
 
@@ -6016,8 +6025,186 @@ html,body{height:100%;width:100%;background:var(--bg-base);color:var(--text-prim
     <text x="2778" y="1342" text-anchor="middle"
           style="font-family:monospace;font-size:22px;fill:rgba(74,158,255,0.5);letter-spacing:2">
       ── TR-06 LV PANEL ──</text>
+
   </g>
 
+
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       TR-10 LV PANEL  ·  POMPE P1  &  THERMO PLONGEUR TP1
+       ══════════════════════════════════════════════════════════════════ -->
+  <g id="eq-tr10-panel">
+    <text x="3894" y="1342" text-anchor="middle"
+          style="font-family:monospace;font-size:22px;fill:rgba(74,158,255,0.5);letter-spacing:2">
+      ── TR-10 LV PANEL ──</text>
+
+    <!-- Feed line from TR-10 bottom to mini-busbar -->
+    <line id="eq-tr10-feed" x1="3894" y1="1201" x2="3894" y2="1360"
+          class="eq-line" vector-effect="non-scaling-stroke"/>
+
+    <!-- Mini-busbar -->
+    <line id="eq-tr10-subbusbar" x1="3764" y1="1360" x2="4024" y2="1360"
+          class="eq-subbusbar" vector-effect="non-scaling-stroke"/>
+
+    <!-- ── BRANCH 1 · Pompe P1 (x=3829) ─────────────────────────── -->
+    <line id="eq-p1-line1" x1="3829" y1="1360" x2="3829" y2="1390"
+          class="eq-line" vector-effect="non-scaling-stroke"/>
+    <line id="eq-iso-p1-a" x1="3829" y1="1390" x2="3829" y2="1405"
+          class="eq-iso" vector-effect="non-scaling-stroke"/>
+    <line id="eq-iso-p1-b" x1="3813" y1="1412" x2="3843" y2="1398"
+          class="eq-iso" vector-effect="non-scaling-stroke"/>
+    <line id="eq-iso-p1-c" x1="3829" y1="1419" x2="3829" y2="1434"
+          class="eq-iso" vector-effect="non-scaling-stroke"/>
+    <line id="eq-p1-line2" x1="3829" y1="1434" x2="3829" y2="1450"
+          class="eq-line" vector-effect="non-scaling-stroke"/>
+    <!-- Pump symbol: circle with P -->
+    <circle id="eq-pump-p1" cx="3829" cy="1470" r="28"
+          class="eq-motor-body" vector-effect="non-scaling-stroke"/>
+    <text x="3829" y="1478" text-anchor="middle" class="eq-label">P</text>
+    <!-- Impeller ticks -->
+    <line x1="3829" y1="1448" x2="3829" y2="1458" stroke="#4a9eff" stroke-width="1.5"
+          opacity="0.8" vector-effect="non-scaling-stroke"/>
+    <line x1="3807" y1="1470" x2="3817" y2="1470" stroke="#4a9eff" stroke-width="1.5"
+          opacity="0.8" vector-effect="non-scaling-stroke"/>
+    <line x1="3841" y1="1470" x2="3851" y2="1470" stroke="#4a9eff" stroke-width="1.5"
+          opacity="0.8" vector-effect="non-scaling-stroke"/>
+    <text x="3829" y="1515" text-anchor="middle"
+          style="font-family:monospace;font-size:22px;fill:#78909c">P1</text>
+    <text x="3829" y="1535" text-anchor="middle"
+          style="font-family:monospace;font-size:18px;fill:#78909c;opacity:0.7">POMPE</text>
+
+    <!-- ── BRANCH 2 · Thermo Plongeur TP1 (x=3959) ───────────────── -->
+    <line id="eq-tp1-line1" x1="3959" y1="1360" x2="3959" y2="1390"
+          class="eq-line" vector-effect="non-scaling-stroke"/>
+    <line id="eq-iso-tp1-a" x1="3959" y1="1390" x2="3959" y2="1405"
+          class="eq-iso" vector-effect="non-scaling-stroke"/>
+    <line id="eq-iso-tp1-b" x1="3943" y1="1412" x2="3973" y2="1398"
+          class="eq-iso" vector-effect="non-scaling-stroke"/>
+    <line id="eq-iso-tp1-c" x1="3959" y1="1419" x2="3959" y2="1434"
+          class="eq-iso" vector-effect="non-scaling-stroke"/>
+    <line id="eq-tp1-line2" x1="3959" y1="1434" x2="3959" y2="1444"
+          class="eq-line" vector-effect="non-scaling-stroke"/>
+    <!-- Thermo Plongeur: rectangle with wavy heating elements -->
+    <rect id="eq-thermo-tp1" x="3927" y="1444" width="64" height="52"
+          fill="none" stroke="#e07040" stroke-width="2"
+          rx="4" vector-effect="non-scaling-stroke"/>
+    <path id="eq-tp1-wave1"
+          d="M3934,1455 Q3940,1449 3946,1455 Q3952,1461 3958,1455 Q3964,1449 3970,1455 Q3976,1461 3982,1455 Q3988,1449 3991,1455"
+          fill="none" stroke="#e07040" stroke-width="1.8" opacity="0.9"
+          vector-effect="non-scaling-stroke"/>
+    <path id="eq-tp1-wave2"
+          d="M3934,1464 Q3940,1458 3946,1464 Q3952,1470 3958,1464 Q3964,1458 3970,1464 Q3976,1470 3982,1464 Q3988,1458 3991,1464"
+          fill="none" stroke="#e07040" stroke-width="1.8" opacity="0.9"
+          vector-effect="non-scaling-stroke"/>
+    <path id="eq-tp1-wave3"
+          d="M3934,1473 Q3940,1467 3946,1473 Q3952,1479 3958,1473 Q3964,1467 3970,1473 Q3976,1479 3982,1473 Q3988,1467 3991,1473"
+          fill="none" stroke="#e07040" stroke-width="1.8" opacity="0.9"
+          vector-effect="non-scaling-stroke"/>
+    <text x="3959" y="1515" text-anchor="middle"
+          style="font-family:monospace;font-size:22px;fill:#78909c">TP1</text>
+    <text x="3959" y="1535" text-anchor="middle"
+          style="font-family:monospace;font-size:18px;fill:#78909c;opacity:0.7">THERMO PLONGEUR</text>
+  </g>
+
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       TR-02 LV PANEL  ·  FEEDER F1  &  CONVEYOR CV2
+       ══════════════════════════════════════════════════════════════════ -->
+  <g id="eq-tr02-panel">
+    <text x="1692" y="1342" text-anchor="middle"
+          style="font-family:monospace;font-size:22px;fill:rgba(74,158,255,0.5);letter-spacing:2">
+      ── TR-02 LV PANEL ──</text>
+    <line id="eq-tr02-feed" x1="1692" y1="1201" x2="1692" y2="1360"
+          class="eq-line" vector-effect="non-scaling-stroke"/>
+    <line id="eq-tr02-subbusbar" x1="1562" y1="1360" x2="1822" y2="1360"
+          class="eq-subbusbar" vector-effect="non-scaling-stroke"/>
+
+    <!-- BRANCH 1 · Feeder F1 -->
+    <line x1="1627" y1="1360" x2="1627" y2="1390" class="eq-line" vector-effect="non-scaling-stroke"/>
+    <line x1="1627" y1="1390" x2="1627" y2="1405" class="eq-iso"  vector-effect="non-scaling-stroke"/>
+    <line x1="1611" y1="1412" x2="1641" y2="1398" class="eq-iso"  vector-effect="non-scaling-stroke"/>
+    <line x1="1627" y1="1419" x2="1627" y2="1444" class="eq-line" vector-effect="non-scaling-stroke"/>
+    <rect id="eq-feeder-f1" x="1595" y="1444" width="64" height="52"
+          fill="none" stroke="#f0c040" stroke-width="2" rx="4" vector-effect="non-scaling-stroke"/>
+    <polyline points="1621,1452 1613,1468 1627,1468 1619,1488"
+          fill="none" stroke="#f0c040" stroke-width="2.5"
+          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+    <text x="1627" y="1515" text-anchor="middle"
+          style="font-family:monospace;font-size:22px;fill:#78909c">F1</text>
+    <text x="1627" y="1535" text-anchor="middle"
+          style="font-family:monospace;font-size:18px;fill:#f0c040;opacity:0.85">FEEDER</text>
+
+    <!-- BRANCH 2 · Conveyor CV2 -->
+    <line x1="1757" y1="1360" x2="1757" y2="1390" class="eq-line" vector-effect="non-scaling-stroke"/>
+    <line x1="1757" y1="1390" x2="1757" y2="1405" class="eq-iso"  vector-effect="non-scaling-stroke"/>
+    <line x1="1741" y1="1412" x2="1771" y2="1398" class="eq-iso"  vector-effect="non-scaling-stroke"/>
+    <line x1="1757" y1="1419" x2="1757" y2="1445" class="eq-line" vector-effect="non-scaling-stroke"/>
+    <circle id="eq-cv2-r1" cx="1727" cy="1460" r="14" class="eq-conveyor-green" vector-effect="non-scaling-stroke"/>
+    <circle id="eq-cv2-r2" cx="1787" cy="1460" r="14" class="eq-conveyor-green" vector-effect="non-scaling-stroke"/>
+    <line   id="eq-cv2-top" x1="1727" y1="1446" x2="1787" y2="1446" class="eq-conveyor-green" vector-effect="non-scaling-stroke"/>
+    <line   id="eq-cv2-bot" x1="1727" y1="1474" x2="1787" y2="1474" class="eq-conveyor-green" vector-effect="non-scaling-stroke"/>
+    <polygon id="eq-cv2-arrow" points="1751,1453 1763,1460 1751,1467"
+          fill="#a8c66c" opacity="0.7" vector-effect="non-scaling-stroke"/>
+    <text x="1757" y="1498" text-anchor="middle"
+          style="font-family:monospace;font-size:22px;fill:#78909c">CV2</text>
+    <text x="1757" y="1518" text-anchor="middle"
+          style="font-family:monospace;font-size:18px;fill:#a8c66c;opacity:0.85">CONVEYOR</text>
+  </g>
+
+  <!-- ── Invisible hit zones for equipment tooltips (large easy-to-hover areas) ── -->
+  <rect id="hz-pump-p1"
+        x="3781" y="1420" width="100" height="130"
+        fill="transparent" stroke="none" style="cursor:crosshair;" vector-effect="non-scaling-stroke"/>
+  <rect id="hz-thermo-tp1"
+        x="3911" y="1420" width="110" height="130"
+        fill="transparent" stroke="none" style="cursor:crosshair;" vector-effect="non-scaling-stroke"/>
+  <rect id="hz-feeder-f1"
+        x="1579" y="1420" width="100" height="130"
+        fill="transparent" stroke="none" style="cursor:crosshair;" vector-effect="non-scaling-stroke"/>
+  <rect id="hz-cv2"
+        x="1709" y="1420" width="100" height="120"
+        fill="transparent" stroke="none" style="cursor:crosshair;" vector-effect="non-scaling-stroke"/>
+  <rect id="hz-motor-m2"
+        x="4504" y="1420" width="100" height="90"
+        fill="transparent" stroke="none" style="cursor:crosshair;" vector-effect="non-scaling-stroke"/>
+  <rect id="hz-motor-m1"
+        x="2600" y="1420" width="100" height="90"
+        fill="transparent" stroke="none" style="cursor:crosshair;" vector-effect="non-scaling-stroke"/>
+  <rect id="hz-cv1"
+        x="2718" y="1420" width="120" height="80"
+        fill="transparent" stroke="none" style="cursor:crosshair;" vector-effect="non-scaling-stroke"/>
+  <rect id="hz-cap1"
+        x="2858" y="1415" width="100" height="100"
+        fill="transparent" stroke="none" style="cursor:crosshair;" vector-effect="non-scaling-stroke"/>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       TR-12 LV PANEL  ·  MOTOR M2
+       ══════════════════════════════════════════════════════════════════ -->
+  <g id="eq-tr12-panel">
+    <text x="4552" y="1342" text-anchor="middle"
+          style="font-family:monospace;font-size:22px;fill:rgba(74,158,255,0.5);letter-spacing:2">
+      ── TR-12 LV PANEL ──</text>
+    <!-- Feed line from lower winding bottom (cy=1159+r=35.6=1195) to mini-busbar -->
+    <line id="eq-tr12-feed" x1="4552" y1="1195" x2="4552" y2="1360"
+          class="eq-line" vector-effect="non-scaling-stroke"/>
+    <!-- Mini-busbar -->
+    <line id="eq-tr12-subbusbar" x1="4422" y1="1360" x2="4682" y2="1360"
+          class="eq-subbusbar" vector-effect="non-scaling-stroke"/>
+    <!-- Drop to motor -->
+    <line x1="4552" y1="1360" x2="4552" y2="1390" class="eq-line" vector-effect="non-scaling-stroke"/>
+    <!-- Isolator -->
+    <line x1="4552" y1="1390" x2="4552" y2="1405" class="eq-iso"  vector-effect="non-scaling-stroke"/>
+    <line x1="4536" y1="1412" x2="4566" y2="1398" class="eq-iso"  vector-effect="non-scaling-stroke"/>
+    <line x1="4552" y1="1419" x2="4552" y2="1450" class="eq-line" vector-effect="non-scaling-stroke"/>
+    <!-- Motor circle -->
+    <circle id="eq-motor-m2" cx="4552" cy="1470" r="28"
+          class="eq-motor-body" vector-effect="non-scaling-stroke"/>
+    <text x="4552" y="1478" text-anchor="middle" class="eq-label">M</text>
+    <text x="4552" y="1515" text-anchor="middle"
+          style="font-family:monospace;font-size:22px;fill:#78909c">M2</text>
+    <text x="4552" y="1535" text-anchor="middle"
+          style="font-family:monospace;font-size:18px;fill:#78909c;opacity:0.7">MOTOR</text>
+  </g>
 </svg>
     </div>
 
@@ -6222,6 +6409,18 @@ const TRANSFORMERS = {
 };
 
 const CB_THRESH = { warn: 0.80, fault: 0.95 }; // fraction of rated current
+
+// ── Live equipment state (updated by applyUpdate every tick) ─────────
+const EQ_STATE = {
+  motor_m1:      { on:true, fault:false, voltage:400, current:22.4, power_kw:18.5 },
+  conveyor_cv1:  { on:true, fault:false, current:14.8, power_kw:11.0, power_factor:0.86 },
+  cap_bank_cap1: { on:true, fault:false, kvar:150, voltage:400, pf_correction:0.94 },
+  pump_p1:       { on:true, fault:false, voltage:400, current:8.4, power_kw:3.0 },
+  thermo_tp1:    { on:true, fault:false, current:9.1, power_kw:6.0, apparent_kva:6.06 },
+  feeder_f1:     { on:true, fault:false, current:45.0, power_kw:28.0, apparent_kva:30.8 },
+  conveyor_cv2:  { on:true, fault:false, current:13.5, power_kw:10.0, power_factor:0.86 },
+  motor_m2:      { on:true, fault:false, voltage:400, current:22.4, power_kw:18.5 }
+};
 
 // ── State ─────────────────────────────────────────────────────────────
 let alarmCount = 0;
@@ -6497,8 +6696,22 @@ function updateTRUI(id, tr, ratio){
 // toggleTR removed — CB/TR state is driven by Node-RED only
 
 // ── applyUpdate — WebSocket contract ─────────────────────────────────
+// OPC SIM live nodes patched in by Node-RED before ws-out:
+//   ns=3;i=1065  ->  state.buses.freq                          (Frequency Hz, Float)
+//   ns=3;i=1011  ->  state.transformers["tr-06"].current       (TR-06 Current A, Float)
 function applyUpdate(state){
   const {buses, power, loads, transformers} = state;
+
+  // ── OPC value guards — hold last-known-good if node not yet subscribed ──
+  if(typeof buses.freq !== 'number' || !isFinite(buses.freq)){
+    buses.freq = sparkFreqData[sparkFreqData.length - 1] || 50.0;
+  }
+  if(transformers && transformers['tr-06']){
+    const _t6 = transformers['tr-06'];
+    if(typeof _t6.current !== 'number' || !isFinite(_t6.current)){
+      _t6.current = TRANSFORMERS['tr-06'].current; // hold last rendered value
+    }
+  }
 
   // Bus voltages
   const vDev=Math.abs(buses.main-400);
@@ -6521,6 +6734,15 @@ function applyUpdate(state){
   updateSubBusbar();
   if(state.equipment){
     const eq = state.equipment;
+    // Merge full data into live state store so tooltips always show current values
+    if(eq.motor_m1)      Object.assign(EQ_STATE.motor_m1,      eq.motor_m1);
+    if(eq.conveyor_cv1)  Object.assign(EQ_STATE.conveyor_cv1,  eq.conveyor_cv1);
+    if(eq.cap_bank_cap1) Object.assign(EQ_STATE.cap_bank_cap1, eq.cap_bank_cap1);
+    if(eq.pump_p1)       Object.assign(EQ_STATE.pump_p1,       eq.pump_p1);
+    if(eq.thermo_tp1)    Object.assign(EQ_STATE.thermo_tp1,    eq.thermo_tp1);
+    if(eq.feeder_f1)     Object.assign(EQ_STATE.feeder_f1,     eq.feeder_f1);
+    if(eq.conveyor_cv2)  Object.assign(EQ_STATE.conveyor_cv2,  eq.conveyor_cv2);
+    if(eq.motor_m2)      Object.assign(EQ_STATE.motor_m2,      eq.motor_m2);
     updateEquipment('m1',   eq.motor_m1      || {on:false, fault:false});
     updateEquipment('cv1',  eq.conveyor_cv1  || {on:false, fault:false});
     updateEquipment('cap1', eq.cap_bank_cap1 || {on:false, fault:false});
@@ -6667,6 +6889,36 @@ function updateSubBusbar(){
   if(sb) sb.setAttribute('class', energised ? 'eq-subbusbar' : 'eq-subbusbar off');
   if(fl) fl.setAttribute('class', energised ? 'eq-line' : 'eq-line off');
 }
+
+// ── OPC SIM Node Mapping ──────────────────────────────────────────────
+// The Node-RED OPC-UA companion flow reads these nodes from OPC SIM and
+// must inject them into the JSON payload sent over the WebSocket.
+//
+//  OPC Node          │ Signal          │ JSON path
+//  ─────────────────────────────────────────────────────────────────────
+//  ns=3;i=1065       │ System Freq(Hz) │ state.buses.freq          (Float)
+//  ns=3;i=1011       │ TR-06 Current   │ state.transformers["tr-06"].current  (Float, Amps)
+//
+// Minimal Node-RED inject example (function node before ws-out):
+//
+//   // msg.payload already contains the full state object built by your flow.
+//   // Patch the two OPC live values in before sending:
+//   msg.payload.buses.freq = msg.opcFreq;           // value from ns=3;i=1065
+//   msg.payload.transformers["tr-06"].current = msg.opcTR06I; // ns=3;i=1011
+//   return msg;
+//
+// The dashboard reads buses.freq every tick for:
+//   • Side-panel "Frequency (Hz)" metric + colour threshold (±0.15 Hz warn, ±0.4 Hz fault)
+//   • 30-sample sparkline trend
+//   • Overlay corner "Main Bus" reading
+//
+// The dashboard reads transformers["tr-06"].current every tick for:
+//   • TR-06 load % bar and colour in the sidebar list
+//   • TR-06 tooltip "Current" field
+//   • TR-06 detail modal KPI (Current A, Load %, Apparent Power kVA)
+//   • Overcurrent alarm logic (warn ≥80%, fault ≥95% of rated 1155 A)
+//   • TR-06 LV sub-busbar energisation state
+// ─────────────────────────────────────────────────────────────────────
 
 // ── WebSocket client ──────────────────────────────────────────────────
 const WS_URL = 'ws://localhost:1880/ws/stiga';
@@ -6861,21 +7113,38 @@ vp.addEventListener('touchend', () => { lastTouches = null; }, {passive: true});
 
 // ── Tooltips ───────────────────────────────────────────────────────────
 const tooltip=$('scada-tooltip');
+// _ttRefreshInterval: active interval handle while a tooltip is shown
+let _ttRefreshInterval = null;
+
+function _ttRefreshContent(titleFn, rowsFn){
+  $('tt-title').textContent = titleFn();
+  const rows = rowsFn();
+  $('tt-type').textContent    = rows.type    || '—';
+  $('tt-status').textContent  = rows.status  || '—';
+  $('tt-current').textContent = rows.current || '—';
+  $('tt-load').textContent    = rows.load    || '—';
+}
+
 function attachTooltip(el, titleFn, rowsFn){
-  el.addEventListener('mouseenter',()=>{
-    $('tt-title').textContent=titleFn();
-    const rows=rowsFn();
-    $('tt-type').textContent=rows.type||'—';
-    $('tt-status').textContent=rows.status||'—';
-    $('tt-current').textContent=rows.current||'—';
-    $('tt-load').textContent=rows.load||'—';
-    tooltip.style.display='block';
+  el.addEventListener('mouseenter', () => {
+    _ttRefreshContent(titleFn, rowsFn);
+    tooltip.style.display = 'block';
+    // Refresh every 500 ms so values update live while hovering
+    if (_ttRefreshInterval) clearInterval(_ttRefreshInterval);
+    _ttRefreshInterval = setInterval(() => {
+      if (tooltip.style.display === 'block') {
+        _ttRefreshContent(titleFn, rowsFn);
+      }
+    }, 500);
   });
-  el.addEventListener('mousemove',e=>{
-    tooltip.style.left=(e.clientX+14)+'px';
-    tooltip.style.top=(e.clientY-10)+'px';
+  el.addEventListener('mousemove', e => {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top  = (e.clientY - 10) + 'px';
   });
-  el.addEventListener('mouseleave',()=>tooltip.style.display='none');
+  el.addEventListener('mouseleave', () => {
+    tooltip.style.display = 'none';
+    if (_ttRefreshInterval) { clearInterval(_ttRefreshInterval); _ttRefreshInterval = null; }
+  });
 }
 
 // ── Init ───────────────────────────────────────────────────────────────
@@ -6905,6 +7174,127 @@ window.addEventListener('load',()=>{
       // cbEl click removed — state from Node-RED only
     }
   });
+
+  // ── Equipment tooltips ──────────────────────────────────────────
+  // Shared rowsFn builders (reused for both symbol elements and hit zones)
+  function m1Rows(){
+    const s = EQ_STATE.motor_m1;
+    const st = s.fault ? 'FAULT' : s.on ? 'RUNNING' : 'STOPPED';
+    return { type:'Induction Motor · 18.5 kW', status:st,
+             current: s.on ? s.voltage.toFixed(0)+' V  ·  '+s.current.toFixed(1)+' A' : '—',
+             load:    s.on ? s.power_kw.toFixed(2)+' kW' : '0 kW' };
+  }
+  function cv1Rows(){
+    const s = EQ_STATE.conveyor_cv1;
+    const st = s.fault ? 'FAULT' : s.on ? 'RUNNING' : 'STOPPED';
+    return { type:'Belt Conveyor · 11 kW', status:st,
+             current: s.on ? s.current.toFixed(1)+' A  ·  '+s.power_kw.toFixed(2)+' kW' : '—',
+             load:    s.on ? 'PF '+s.power_factor.toFixed(3) : '—' };
+  }
+  function cap1Rows(){
+    const s = EQ_STATE.cap_bank_cap1;
+    const st = s.fault ? 'FAULT' : s.on ? 'ACTIVE' : 'OFFLINE';
+    return { type:'Capacitor Bank · 150 kVAr', status:st,
+             current: s.on ? s.kvar.toFixed(1)+' kVAr  ·  '+s.voltage.toFixed(0)+' V' : '0 kVAr',
+             load:    s.on ? 'PF '+s.pf_correction.toFixed(3) : '—' };
+  }
+
+  // Attach to original symbol elements (kept for backwards compat)
+  ['eq-motor-m1'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el){ el.style.cursor='crosshair'; attachTooltip(el, ()=>'Motor M1', m1Rows); }
+  });
+  ['eq-cv1-r1','eq-cv1-r2','eq-cv1-top','eq-cv1-bot'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el){ el.style.cursor='crosshair'; attachTooltip(el, ()=>'Conveyor CV1', cv1Rows); }
+  });
+  ['eq-cap1-p1a','eq-cap1-p1b','eq-cap1-s1','eq-cap1-s2'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el){ el.style.cursor='crosshair'; attachTooltip(el, ()=>'Cap Bank CAP1', cap1Rows); }
+  });
+
+  // ── Large invisible hit zones — easy hover targets ────────────────
+  // These transparent rects sit on top of the SVG and cover the full
+  // equipment area, making it trivial to trigger the tooltip.
+  const hzM1   = document.getElementById('hz-motor-m1');
+  const hzCv1  = document.getElementById('hz-cv1');
+  const hzCap1 = document.getElementById('hz-cap1');
+  if(hzM1)   attachTooltip(hzM1,   ()=>'Motor M1',           m1Rows);
+  if(hzCv1)  attachTooltip(hzCv1,  ()=>'Conveyor CV1',       cv1Rows);
+  if(hzCap1) attachTooltip(hzCap1, ()=>'Cap Bank CAP1',      cap1Rows);
+
+  // ── POMPE P1 ──────────────────────────────────────────────────────
+  function p1Rows(){
+    const s = EQ_STATE.pump_p1;
+    const st = s.fault ? 'FAULT' : s.on ? 'RUNNING' : 'STOPPED';
+    return { type:'Centrifugal Pump · P1', status:st,
+             current: s.on ? s.voltage.toFixed(0)+' V  ·  '+s.current.toFixed(1)+' A' : '—',
+             load:    s.on ? s.power_kw.toFixed(2)+' kW' : '0 kW' };
+  }
+  ['eq-pump-p1'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el){ el.style.cursor='crosshair'; attachTooltip(el, ()=>'Pompe P1', p1Rows); }
+  });
+  const hzP1 = document.getElementById('hz-pump-p1');
+  if(hzP1) attachTooltip(hzP1, ()=>'Pompe P1', p1Rows);
+
+  // ── THERMO PLONGEUR TP1 ───────────────────────────────────────────
+  function tp1Rows(){
+    const s = EQ_STATE.thermo_tp1;
+    const st = s.fault ? 'FAULT' : s.on ? 'HEATING' : 'OFF';
+    return { type:'Thermo Plongeur · TP1', status:st,
+             current: s.on ? s.current.toFixed(1)+' A  ·  '+s.power_kw.toFixed(2)+' kW' : '—',
+             load:    s.on ? s.apparent_kva.toFixed(2)+' kVA' : '0 kVA' };
+  }
+  ['eq-thermo-tp1'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el){ el.style.cursor='crosshair'; attachTooltip(el, ()=>'Thermo Plongeur TP1', tp1Rows); }
+  });
+  const hzTp1 = document.getElementById('hz-thermo-tp1');
+  if(hzTp1) attachTooltip(hzTp1, ()=>'Thermo Plongeur TP1', tp1Rows);
+
+  // ── FEEDER F1 ──────────────────────────────────────────────────────
+  function f1Rows(){
+    const s = EQ_STATE.feeder_f1;
+    const st = s.fault ? 'FAULT' : s.on ? 'ACTIVE' : 'OFF';
+    return { type:'LV Feeder · F1', status:st,
+             current: s.on ? s.current.toFixed(1)+' A  ·  '+s.power_kw.toFixed(2)+' kW' : '—',
+             load:    s.on ? s.apparent_kva.toFixed(2)+' kVA' : '0 kVA' };
+  }
+  ['eq-feeder-f1'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el){ el.style.cursor='crosshair'; attachTooltip(el, ()=>'Feeder F1', f1Rows); }
+  });
+  const hzF1 = document.getElementById('hz-feeder-f1');
+  if(hzF1) attachTooltip(hzF1, ()=>'Feeder F1', f1Rows);
+
+  // ── CONVEYOR CV2 ───────────────────────────────────────────────────
+  function cv2Rows(){
+    const s = EQ_STATE.conveyor_cv2;
+    const st = s.fault ? 'FAULT' : s.on ? 'RUNNING' : 'STOPPED';
+    return { type:'Belt Conveyor · CV2', status:st,
+             current: s.on ? s.current.toFixed(1)+' A  ·  '+s.power_kw.toFixed(2)+' kW' : '—',
+             load:    s.on ? 'PF '+s.power_factor.toFixed(3) : '—' };
+  }
+  ['eq-cv2-r1','eq-cv2-r2','eq-cv2-top','eq-cv2-bot'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el){ el.style.cursor='crosshair'; attachTooltip(el, ()=>'Conveyor CV2', cv2Rows); }
+  });
+  const hzCv2 = document.getElementById('hz-cv2');
+  if(hzCv2) attachTooltip(hzCv2, ()=>'Conveyor CV2', cv2Rows);
+
+  // ── MOTOR M2 ───────────────────────────────────────────────────────
+  function m2Rows(){
+    const s = EQ_STATE.motor_m2;
+    const st = s.fault ? 'FAULT' : s.on ? 'RUNNING' : 'STOPPED';
+    return { type:'Induction Motor · 18.5 kW', status:st,
+             current: s.on ? s.voltage.toFixed(0)+' V  ·  '+s.current.toFixed(1)+' A' : '—',
+             load:    s.on ? s.power_kw.toFixed(2)+' kW' : '0 kW' };
+  }
+  const m2El = document.getElementById('eq-motor-m2');
+  if(m2El){ m2El.style.cursor='crosshair'; attachTooltip(m2El, ()=>'Motor M2', m2Rows); }
+  const hzM2 = document.getElementById('hz-motor-m2');
+  if(hzM2) attachTooltip(hzM2, ()=>'Motor M2', m2Rows);
 
   // First render
   applyUpdate(generateState());

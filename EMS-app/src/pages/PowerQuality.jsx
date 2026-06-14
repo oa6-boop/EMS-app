@@ -45,19 +45,19 @@ export default function PowerQuality({ data = {}, powerQualityHistory = [], sele
   const frequencies  = powerQualityHistory.map(p => p.frequency    ?? 50);
   const kwValues     = powerQualityHistory.map(p => p.kw).filter(v => v != null);
 
-  const tension   = data.tension          ?? 415;
+  const tension   = data.tension          ?? 230;
   const frequence = data.frequence        ?? 50;
   const pf        = data.facteurPuissance ?? 0.94;
   const thd       = data.thd             ?? 3.2;
 
-  const voltStatus = tension  >= 380 && tension  <= 440 ? "Stable ✓"   : "Out of range ⚠";
+  const voltStatus = tension  >= 210 && tension  <= 250 ? "Stable ✓"   : "Out of range ⚠";
   const freqStatus = frequence >= 49 && frequence <= 51  ? "Normal ✓"   : "Anomaly ⚠";
   const pfStatus   = pf >= 0.90 ? "Good ✓" : pf >= 0.85 ? "Acceptable" : "Low ⚠";
   const thdStatus  = thd <= 5  ? "Compliant ✓" : "High ⚠";
 
   const pfColor   = pf >= 0.90 ? "#38a169" : pf >= 0.85 ? "#d69e2e" : "#e53e3e";
   const thdColor  = thd <= 5   ? "#38a169" : "#e53e3e";
-  const voltColor = tension >= 380 && tension <= 440 ? "#38a169" : "#e53e3e";
+  const voltColor = tension >= 210 && tension <= 250 ? "#38a169" : "#e53e3e";
   const freqColor = frequence >= 49 && frequence <= 51 ? "#38a169" : "#e53e3e";
 
   return (
@@ -78,7 +78,7 @@ export default function PowerQuality({ data = {}, powerQualityHistory = [], sele
             <div className="kpi-badge" style={{ background: voltColor }}>{voltStatus}</div>
             <h3 style={{ color: voltColor }}>{tension.toFixed(1)} V</h3>
             <p>Voltage</p>
-            <span>Nominal: 415 V · Range: 380–440 V</span>
+            <span>Nominal: 230 V · Range: 210–250 V</span>
           </div>
 
           <div className="kpi-card">
@@ -116,7 +116,7 @@ export default function PowerQuality({ data = {}, powerQualityHistory = [], sele
       </div>
 
       <div className="power-quality-grid">
-        <LineChart title="Voltage Trend"       data={voltages}     unit="V"  colorClass="chart-blue"   nominal={415} />
+        <LineChart title="Voltage Trend"       data={voltages}     unit="V"  colorClass="chart-blue"   nominal={230} />
         <LineChart title="Frequency Trend"     data={frequencies}  unit="Hz" colorClass="chart-cyan"   nominal={50} />
         <LineChart title="Power Factor Trend"  data={powerFactors} unit=""   colorClass="chart-purple"  nominal={0.9} />
         {kwValues.length > 0 && (
@@ -135,8 +135,8 @@ export default function PowerQuality({ data = {}, powerQualityHistory = [], sele
               <h4>Voltage</h4>
               <ul>
                 <li>Current  <strong style={{ color: voltColor }}>{tension.toFixed(1)} V</strong></li>
-                <li>Nominal  <strong>415.0 V</strong></li>
-                <li>Delta    <strong>{(tension - 415).toFixed(1)} V</strong></li>
+                <li>Nominal  <strong>230.0 V</strong></li>
+                <li>Delta    <strong>{(tension - 230).toFixed(1)} V</strong></li>
                 <li>Status   <strong style={{ color: voltColor }}>{voltStatus}</strong></li>
               </ul>
             </div>
@@ -178,11 +178,11 @@ export default function PowerQuality({ data = {}, powerQualityHistory = [], sele
             <div className="carbon-card">
               <h4>Voltage Stability</h4>
               <strong style={{ color: voltColor }}>
-                {tension >= 380 && tension <= 440
-                  ? `${(100 - Math.abs((tension - 415) / 415) * 100).toFixed(1)}%`
+                {tension >= 210 && tension <= 250
+                  ? `${(100 - Math.abs((tension - 230) / 230) * 100).toFixed(1)}%`
                   : "OUT OF RANGE"}
               </strong>
-              <span>Nominal ±6% = 380–440 V</span>
+              <span>Nominal ±9% = 210–250 V</span>
             </div>
             <div className="carbon-card">
               <h4>Frequency Control</h4>
@@ -203,7 +203,6 @@ export default function PowerQuality({ data = {}, powerQualityHistory = [], sele
               <strong style={{ color: thdColor }}>{thd <= 5 ? "PASS" : "FAIL"}</strong>
               <span>IEC 61000 limit: 5%</span>
             </div>
-            
           </div>
         </section>
       </div>

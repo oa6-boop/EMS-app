@@ -1,4 +1,8 @@
-const API_BASE_URL = "http://127.0.0.1:8000/api/chat";
+// Fix Docker / réseau : hostname dynamique (comme les autres fichiers API).
+// "127.0.0.1" en dur cassait la messagerie dès que l'app était ouverte
+// depuis une autre machine ou un conteneur Docker.
+const hostname     = window.location.hostname;
+const API_BASE_URL = `http://${hostname}:8000/api/chat`;
 
 export async function searchUsers(query, token) {
   const response = await fetch(

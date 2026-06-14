@@ -9,7 +9,7 @@ from datetime import datetime
 import paho.mqtt.client as mqtt
 from kafka import KafkaConsumer
 
-from app.core.config import MQTT_BROKER, MQTT_PORT
+from app.core.config import MQTT_BROKER, MQTT_PORT, MQTT_TOPIC
 from app.db import SessionLocal
 from app.models import Alarm, EnergyHistory, TelemetryRecord
 from app.utils import calculate_cost
@@ -62,7 +62,153 @@ POWER_QUALITY_KEYS = {
     "thd_current_pct",
 }
 
+# ── ADAPTER DATAPLATFORM ──────────────────────────────────────────────────────
+# La DataPlatform finale n'est pas figée. Le flow Node-RED actuel envoie
+# voltage_V / frequency_Hz / current_A / active_energy_kWh, mais le schéma
+# Avro du repo (payload.json) prévoit frequency_hz, voltage_v1/v2/v3,
+# current_a, active_energy_kwh (minuscules + tension triphasée) et un
+# timestamp epoch (long). Cet adapter normalise TOUTES ces variantes vers
+# les clés canoniques du backend, en INSENSIBLE À LA CASSE, pour que
+# l'ingestion fonctionne quel que soit le format final livré par l'équipe.
+
+CANONICAL_MEASUREMENT_KEYS = {
+    # clé canonique  →  alias acceptés (comparés en minuscules)
+    "frequency_Hz":      {"frequency_hz", "frequency", "freq_hz", "freq"},
+    "voltage_V":         {"voltage_v", "voltage", "volt", "u_v", "tension"},
+    "current_A":         {"current_a", "current", "i_a", "courant"},
+    "power_factor":      {"power_factor", "pf", "cos_phi", "cosphi"},
+    "thd_voltage_pct":   {"thd_voltage_pct", "thd_v_pct", "thd_voltage", "thd_v"},
+    "thd_current_pct":   {"thd_current_pct", "thd_i_pct", "thd_current", "thd_i"},
+    "active_energy_kWh": {"active_energy_kwh", "energy_kwh", "kwh_total",
+                          "active_energy", "total_energy_kwh"},
+}
+
+# Tensions triphasées du schéma Avro → moyennées en voltage_V
+THREE_PHASE_VOLTAGE_KEYS = {"voltage_v1", "voltage_v2", "voltage_v3"}
+
+# Clés racine qui sont des métadonnées, PAS des mesures (pour payload "plat")
+PAYLOAD_META_KEYS = {
+    "device_id", "device_name", "meter_id", "id", "timestamp", "schema",
+    "source", "plant", "plant_name", "site", "unit", "unit_name", "workshop",
+    "line", "line_name", "production_line", "area", "zone", "area_name",
+    "equipment", "equipment_name", "tags", "labels",
+}
+
+# ── TAGS EQUIPEMENT ───────────────────────────────────────────────────────────
+# Si la DataPlatform envoie un champ "tags" (liste ou chaine "a,b,c") ou
+# "labels", on l'utilise tel quel. Sinon, fallback par meter pour que la
+# fonctionnalite soit demontrable des aujourd'hui — remplace automatiquement
+# des que la DataPlatform finale enverra de vrais tags.
+DEFAULT_METER_TAGS = {
+    1: "pump,critical",
+    2: "motor,production",
+    3: "compressor,hvac",
+    4: "motor,production",
+    5: "pump,water",
+    6: "lighting,auxiliary",
+    7: "compressor,critical",
+    8: "motor,auxiliary",
+}
+
+
+def extract_tags(raw: dict, meter_id: int) -> str | None:
+    """Retourne les tags en chaine 'a,b,c' (minuscules, sans doublons)."""
+    value = raw.get("tags")
+    if value is None:
+        value = raw.get("labels")
+
+    tags = []
+    if isinstance(value, (list, tuple)):
+        tags = [str(t).strip().lower() for t in value if str(t).strip()]
+    elif isinstance(value, str) and value.strip():
+        tags = [t.strip().lower() for t in value.split(",") if t.strip()]
+
+    if not tags:
+        fallback = DEFAULT_METER_TAGS.get(meter_id)
+        return fallback
+
+    # dedoublonnage en preservant l'ordre
+    seen, unique = set(), []
+    for t in tags:
+        if t not in seen:
+            seen.add(t)
+            unique.append(t)
+    return ",".join(unique)
+
+
+def normalize_measurements(measurements: dict) -> dict:
+    """
+    Normalise les clés de mesures vers les noms canoniques du backend.
+    - insensible à la casse (voltage_V == voltage_v == VOLTAGE_V)
+    - moyenne voltage_v1/v2/v3 (triphasé Avro) en voltage_V unique
+    - les clés inconnues (water_m3, steam_kg, ...) sont conservées telles
+      quelles : elles sont traitées comme énergies additionnelles plus loin.
+    """
+    if not isinstance(measurements, dict):
+        return {}
+
+    normalized = {}
+    phase_voltages = []
+
+    for raw_key, value in measurements.items():
+        key_lower = str(raw_key).strip().lower()
+
+        if key_lower in THREE_PHASE_VOLTAGE_KEYS:
+            v = safe_float(value)
+            if v is not None:
+                phase_voltages.append(v)
+            continue
+
+        matched = False
+        for canonical, aliases in CANONICAL_MEASUREMENT_KEYS.items():
+            if key_lower == canonical.lower() or key_lower in aliases:
+                normalized[canonical] = value
+                matched = True
+                break
+
+        if not matched:
+            normalized[raw_key] = value
+
+    if phase_voltages and "voltage_V" not in normalized:
+        normalized["voltage_V"] = round(
+            sum(phase_voltages) / len(phase_voltages), 2
+        )
+
+    return normalized
+
+
+def extract_measurements(raw: dict) -> dict:
+    """
+    Récupère le bloc de mesures, que le payload soit :
+    - imbriqué  : {"device_id": ..., "measurements": {...}}  (format actuel)
+    - plat      : {"device_id": ..., "voltage_V": 230, ...}  (variante possible)
+    Retourne {} si aucune mesure numérique n'est trouvée.
+    """
+    measurements = raw.get("measurements")
+
+    if isinstance(measurements, dict) and measurements:
+        return measurements
+
+    # Payload plat : toute clé numérique non-métadonnée est une mesure
+    return {
+        key: value
+        for key, value in raw.items()
+        if key not in PAYLOAD_META_KEYS and isinstance(value, (int, float))
+    }
+
 _kafka_consumers_started = False
+
+# Event loop principal de FastAPI — capturé au démarrage (main.py).
+# Indispensable : les callbacks MQTT (paho) et Kafka tournent dans des
+# threads séparés SANS event loop asyncio. asyncio.create_task() y échoue
+# silencieusement. On utilise run_coroutine_threadsafe vers ce loop.
+MAIN_LOOP = None
+
+
+def set_main_loop(loop) -> None:
+    """Appelé par main.py au startup pour enregistrer le loop FastAPI."""
+    global MAIN_LOOP
+    MAIN_LOOP = loop
 
 
 def safe_float(value, default=None):
@@ -75,8 +221,23 @@ def safe_float(value, default=None):
 
 
 def parse_datetime(value):
-    if not value:
+    """
+    Accepte les deux formats de timestamp possibles de la DataPlatform :
+    - ISO 8601 string ("2026-06-10T12:00:00Z") — flow Node-RED actuel
+    - epoch numérique en secondes OU millisecondes — schéma Avro ("timestamp": long)
+    """
+    if value is None or value == "":
         return datetime.utcnow()
+
+    # Epoch numérique (int/float ou string de chiffres)
+    if isinstance(value, (int, float)) or str(value).strip().isdigit():
+        try:
+            ts = float(value)
+            if ts > 1e12:          # millisecondes → secondes
+                ts /= 1000.0
+            return datetime.utcfromtimestamp(ts)
+        except Exception:
+            return datetime.utcnow()
 
     try:
         cleaned = str(value).replace("Z", "+00:00")
@@ -158,18 +319,28 @@ def get_ws_manager():
 
 
 def broadcast_ws(payload: dict) -> None:
+    """
+    Diffuse un message WebSocket depuis n'importe quel thread.
+
+    Les callbacks paho-mqtt et kafka-python s'exécutent dans leurs propres
+    threads (sans event loop asyncio). Dans ces threads,
+    asyncio.get_event_loop() lève RuntimeError et create_task() exige un
+    loop déjà en cours — l'ancienne version ne diffusait donc JAMAIS rien.
+    run_coroutine_threadsafe planifie la coroutine sur le loop principal
+    de FastAPI, capturé au démarrage via set_main_loop().
+    """
     ws = get_ws_manager()
 
     if not ws or not getattr(ws, "active_connections", None):
         return
 
-    try:
-        loop = asyncio.get_event_loop()
+    if MAIN_LOOP is None or MAIN_LOOP.is_closed():
+        return
 
-        if loop.is_running():
-            asyncio.create_task(ws.broadcast(payload))
-    except Exception:
-        pass
+    try:
+        asyncio.run_coroutine_threadsafe(ws.broadcast(payload), MAIN_LOOP)
+    except Exception as exc:
+        print(f"⚠️ WS broadcast error: {exc}")
 
 
 def normalize_energy_name(key: str) -> str:
@@ -241,6 +412,8 @@ def extract_topology(topic: str, raw: dict) -> dict:
     return {
         "meter_id": meter_id,
 
+        "tags": extract_tags(raw, meter_id),
+
         "plant": raw.get("plant")
         or raw.get("plant_name")
         or raw.get("site")
@@ -270,9 +443,12 @@ def extract_topology(topic: str, raw: dict) -> dict:
 
 def parse_dataplatform_payload(topic: str, raw: dict) -> list[dict]:
     topology = extract_topology(topic, raw)
-    measurements = raw.get("measurements", {})
 
-    if not isinstance(measurements, dict):
+    # Adapter : payload imbriqué OU plat, puis clés normalisées (casse,
+    # alias, triphasé) — voir normalize_measurements / extract_measurements.
+    measurements = normalize_measurements(extract_measurements(raw))
+
+    if not measurements:
         return []
 
     timestamp = parse_datetime(raw.get("timestamp"))
@@ -290,6 +466,7 @@ def parse_dataplatform_payload(topic: str, raw: dict) -> list[dict]:
         "production_line": topology["production_line"],
         "area": topology["area"],
         "equipment": topology["equipment"],
+        "tags": topology["tags"],
         "source": "dataplatform",
         "timestamp": timestamp,
         "voltage": voltage,
@@ -355,6 +532,7 @@ def save_telemetry_record(payload: dict) -> None:
             energy_name=payload["energy_name"],
             value=float(payload["value"]),
             unit=payload["unit"],
+            tags=payload.get("tags"),
             source=payload.get("source", "dataplatform"),
             voltage=payload.get("voltage"),
             frequency=payload.get("frequency"),
@@ -393,6 +571,7 @@ def save_telemetry_record(payload: dict) -> None:
                 "plant": record.plant,
                 "area": record.area,
                 "equipment": record.equipment,
+                "tags": record.tags,
                 "energy_name": record.energy_name,
                 "value": record.value,
                 "unit": record.unit,
@@ -681,16 +860,27 @@ def start_kafka_consumers():
 def on_connect(client, userdata, flags, reason_code, properties=None):
     print(f"✅ MQTT connected → {MQTT_BROKER}:{MQTT_PORT}")
 
-    client.subscribe("ems/meters/#", qos=1)
+    # Topic configurable via .env (MQTT_TOPIC). Si la DataPlatform finale
+    # change de topic, il suffit de modifier le .env — AUCUN code à toucher.
+    topic = MQTT_TOPIC or "ems/meters/#"
+    client.subscribe(topic, qos=1)
+    print(f"✅ Subscribed: {topic}")
 
-    print("✅ Subscribed: ems/meters/#")
+    # Sécurité : on garde aussi le topic historique si différent
+    if topic != "ems/meters/#":
+        client.subscribe("ems/meters/#", qos=1)
+        print("✅ Subscribed (fallback): ems/meters/#")
 
 
 def on_message(client, userdata, msg):
     try:
         raw = json.loads(msg.payload.decode("utf-8"))
 
-        if "measurements" not in raw:
+        if not isinstance(raw, dict):
+            return
+
+        # Accepte payload imbriqué ("measurements") OU plat (mesures racine)
+        if not extract_measurements(raw):
             return
 
         print(f"📩 DataPlatform MQTT {msg.topic} → {raw.get('device_id')}")

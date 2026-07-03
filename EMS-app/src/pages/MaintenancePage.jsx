@@ -5,6 +5,8 @@ import {
   updateMaintenanceRecord,
   deleteMaintenanceRecord,
 } from "../api/maintenanceApi";
+import { fetchEquipmentList } from "../api/emsApi";
+import { fetchTechnicians } from "../api/usersApi";
 
 const MAINTENANCE_TYPES = [
   "Predictive",
@@ -22,13 +24,8 @@ const STATUS_COLORS = {
   "Cancelled":   { bg: "#f7fafc", text: "#718096", border: "#e2e8f0" },
 };
 
-const DEFAULT_EQUIPMENTS = [
-  "Meter-1", "Meter-2", "Meter-3", "Meter-4",
-  "Meter-5", "Meter-6", "Meter-7", "Meter-8",
-];
-
 const EMPTY_FORM = {
-  equipment:      "Meter-1",
+  equipment:      "",
   type:           "Inspection visuelle",
   scheduled_date: "",
   technician:     "",
@@ -67,13 +64,23 @@ export default function MaintenancePage({ energies = [], currentUser = null }) {
   const [editId,   setEditId]   = useState(null);
   const [filter,   setFilter]   = useState("All");
   const [form,     setForm]     = useState(EMPTY_FORM);
+  const [platformEquipments, setPlatformEquipments] = useState([]);
+  const [technicians, setTechnicians] = useState([]);
 
   const equipments = [
     ...new Set([
-      ...DEFAULT_EQUIPMENTS,
-      ...energies.map(e => e.rawData?.equipment).filter(Boolean),
+      ...platformEquipments.map((e) => e.equipment).filter(Boolean),
+      ...energies.map(e => e.rawData?.equipment || e.equipment).filter(Boolean),
     ]),
   ].sort();
+
+  // Zone (area) de chaque équipement — pour un libellé clair dans le menu
+  const equipmentAreas = {};
+  platformEquipments.forEach((e) => {
+    if (e.equipment && e.area && !equipmentAreas[e.equipment]) {
+      equipmentAreas[e.equipment] = e.area;
+    }
+  });
 
   const canEdit = (record) => {
     if (!currentUser) return false;
@@ -93,9 +100,35 @@ export default function MaintenancePage({ energies = [], currentUser = null }) {
     }
   };
 
+  const loadEquipments = async () => {
+    try {
+      const data = await fetchEquipmentList();
+      setPlatformEquipments(data || []);
+    } catch {
+      // keep current list from energies props
+    }
+  };
+
+  // Techniciens (rôle maintenance) — rafraîchis avec le même intervalle :
+  // un nouvel utilisateur maintenance apparaît automatiquement dans le menu.
+  const loadTechnicians = async () => {
+    try {
+      const data = await fetchTechnicians();
+      setTechnicians(data || []);
+    } catch {
+      // liste inchangée si le backend est indisponible
+    }
+  };
+
   useEffect(() => {
     loadRecords();
-    const iv = setInterval(loadRecords, 10000);
+    loadEquipments();
+    loadTechnicians();
+    const iv = setInterval(() => {
+      loadRecords();
+      loadEquipments();
+      loadTechnicians();
+    }, 10000);
     return () => clearInterval(iv);
   }, []);
 
@@ -171,12 +204,12 @@ export default function MaintenancePage({ energies = [], currentUser = null }) {
         <div>
           <h1>Preventive Maintenance</h1>
           <p className="page-subtitle">
-            Schedule and track equipment maintenance
+            Schedule and track real equipment discovered from DataPlatform
           </p>
         </div>
         <button
           type="button"
-          onClick={() => { setShowForm(true); setEditId(null); setForm(EMPTY_FORM); }}
+          onClick={() => { setShowForm(true); setEditId(null); setForm({ ...EMPTY_FORM, equipment: equipments[0] || "" }); }}
           style={{
             background: "#2563eb", color: "#fff", border: "none",
             borderRadius: "10px", padding: "0.6rem 1.25rem",
@@ -386,8 +419,13 @@ export default function MaintenancePage({ energies = [], currentUser = null }) {
               <div>
                 <label style={{ fontSize: "0.8rem", fontWeight: 600, display: "block", marginBottom: "0.3rem" }}>Equipment *</label>
                 <select value={form.equipment} onChange={e => setForm(p => ({ ...p, equipment: e.target.value }))}
-                  style={{ width: "100%", padding: "0.45rem", borderRadius: "8px", border: "1px solid var(--border-color)", background: "var(--bg-main)", color: "var(--text-main)" }}>
-                  {equipments.map(eq => <option key={eq} value={eq}>{eq}</option>)}
+                  style={{ width: "100%", padding: "0.45rem", borderRadius: "8px", border: "1px solid var(--border-color)", background: "var(--bg-main)", color: "var(--text-main)" }} required>
+                  <option value="" disabled>{equipments.length ? "Select equipment" : "Waiting for DataPlatform equipment..."}</option>
+                  {equipments.map(eq => (
+                    <option key={eq} value={eq}>
+                      {equipmentAreas[eq] ? `${eq} — ${equipmentAreas[eq]}` : eq}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -407,8 +445,22 @@ export default function MaintenancePage({ energies = [], currentUser = null }) {
 
               <div>
                 <label style={{ fontSize: "0.8rem", fontWeight: 600, display: "block", marginBottom: "0.3rem" }}>Technician</label>
-                <input type="text" placeholder="Name" value={form.technician} onChange={e => setForm(p => ({ ...p, technician: e.target.value }))}
-                  style={{ width: "100%", padding: "0.45rem", borderRadius: "8px", border: "1px solid var(--border-color)", background: "var(--bg-main)", color: "var(--text-main)" }} />
+                <select value={form.technician} onChange={e => setForm(p => ({ ...p, technician: e.target.value }))}
+                  style={{ width: "100%", padding: "0.45rem", borderRadius: "8px", border: "1px solid var(--border-color)", background: "var(--bg-main)", color: "var(--text-main)" }}>
+                  <option value="">— Unassigned —</option>
+                  {technicians.map(t => (
+                    <option key={t.id} value={t.name}>🔧 {t.name}</option>
+                  ))}
+                  {/* Si le record édité a un technicien qui n'existe plus, on le garde sélectionnable */}
+                  {form.technician && !technicians.some(t => t.name === form.technician) && (
+                    <option value={form.technician}>{form.technician}</option>
+                  )}
+                </select>
+                {technicians.length === 0 && (
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                    No maintenance user yet — create one in Users Management
+                  </span>
+                )}
               </div>
 
               <div>

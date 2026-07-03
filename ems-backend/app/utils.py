@@ -117,6 +117,26 @@ ENERGY_RATES_MASTER = {
     "green hydrogen": 30.0,
     "hydrogène vert": 30.0,
 
+
+    "sec": 0.0,
+    "specific energy consumption": 0.0,
+    "sec-kwh-per-unit": 0.0,
+    "flow rate": 0.0,
+    "flow-rate": 0.0,
+    "instant flow": 0.0,
+    "production quantity": 0.0,
+    "production": 0.0,
+    "frequency": 0.0,
+    "voltage": 0.0,
+    "current": 0.0,
+    "power factor": 0.0,
+    "thd": 0.0,
+    "thd voltage": 0.0,
+    "thd current": 0.0,
+    "reactive power": 0.0,
+    "apparent power": 0.0,
+    "temperature": 0.0,
+    "pressure": 0.0,
     "coal": 2.5,
     "charbon": 2.5,
     "coke": 3.0,
@@ -124,6 +144,8 @@ ENERGY_RATES_MASTER = {
 
 KEYWORD_RATES = [
     (["co2", "co₂", "carbon", "emission", "ghg"], 0.0),
+
+    (["sec", "specific energy", "flow", "production", "frequency", "voltage", "current", "power factor", "thd", "reactive", "apparent", "temperature", "pressure"], 0.0),
     (
         [
             "electric",
@@ -177,7 +199,7 @@ def get_rate_for_energy(energy_name: str, db=None) -> float:
     Priorité : DB admin → dictionnaire exact → matching partiel → défaut
     """
     if not energy_name:
-        return 1.40
+        return 0.0
 
     name_clean = energy_name.strip().lower().replace("_", " ")
 
@@ -204,7 +226,7 @@ def get_rate_for_energy(energy_name: str, db=None) -> float:
         if any(k in name_clean for k in keywords):
             return rate
 
-    return 1.40
+    return 0.0
 
 
 def calculate_cost(energy_name: str, value: float, db=None) -> float:

@@ -17,6 +17,209 @@ const isCumulative = (e) => {
   return n.includes("kwh") || e?.unit === "kWh";
 };
 
+
+const isDirectCO2Measurement = (e) => {
+  const n = (e?.name || "").toLowerCase();
+  return isCO2(n) || String(e?.unit || "").toLowerCase().includes("co2");
+};
+
+const isSecMeasurement = (e) => {
+  const n = (e?.name || "").toLowerCase();
+  return n === "sec" || n.includes("specific energy") || n.includes("sec");
+};
+
+const isPowerQualityMeasurement = (e) => {
+  const n = (e?.name || "").toLowerCase();
+  const u = String(e?.unit || "").toLowerCase();
+  return (
+    n.includes("voltage") ||
+    n.includes("frequency") ||
+    n.includes("power factor") ||
+    n.includes("thd") ||
+    n.includes("current") ||
+    u === "v" ||
+    u === "hz" ||
+    u === "a" ||
+    u === "%" ||
+    u === "pu"
+  );
+};
+
+const isFlowMeasurement = (e) => {
+  const n = (e?.name || "").toLowerCase();
+  const u = String(e?.unit || "").toLowerCase();
+  return n.includes("flow") || u.includes("/h") || u.includes("m³/h") || u.includes("m3/h");
+};
+
+const isBillableMeasurement = (e) => {
+  if (!e) return false;
+  if (isDirectCO2Measurement(e) || isSecMeasurement(e) || isPowerQualityMeasurement(e)) return false;
+  if (isFlowMeasurement(e)) return false;
+  const n = (e.name || "").toLowerCase();
+  const u = String(e.unit || "").toLowerCase();
+  return (
+    Number(e.cost || 0) > 0 ||
+    n.includes("electric") ||
+    n.includes("water") ||
+    n.includes("steam") ||
+    n.includes("fuel") ||
+    n.includes("gas") ||
+    n.includes("diesel") ||
+    n.includes("solar") ||
+    n.includes("compressed air") ||
+    u === "kwh" ||
+    u === "m³" ||
+    u === "m3" ||
+    u === "l" ||
+    u === "kg" ||
+    u === "tonne"
+  );
+};
+
+function formatNumber(value, digits = 2) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n)) return "—";
+  if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  if (Math.abs(n) >= 100) return n.toFixed(1);
+  return n.toFixed(digits);
+}
+
+function getKpiMeta(e) {
+  const name = (e?.name || "").toLowerCase();
+  const unit = String(e?.unit || "").toLowerCase();
+
+  if (name.includes("water") || name.includes("eau")) {
+    return { icon: "💧", color: "#0284c7", category: "Water" };
+  }
+  if (isFlowMeasurement(e)) {
+    return { icon: "🌊", color: "#0891b2", category: "Flow" };
+  }
+  if (isSecMeasurement(e)) {
+    return { icon: "📊", color: "#7c3aed", category: "Efficiency" };
+  }
+  if (isDirectCO2Measurement(e)) {
+    return { icon: "🌿", color: "#16a34a", category: "Environment" };
+  }
+  if (name.includes("voltage") || unit === "v") {
+    return { icon: "🔌", color: "#2563eb", category: "Power Quality" };
+  }
+  if (name.includes("frequency") || unit === "hz") {
+    return { icon: "〰️", color: "#0f766e", category: "Power Quality" };
+  }
+  if (name.includes("power factor")) {
+    return { icon: "↗", color: "#9333ea", category: "Power Quality" };
+  }
+  if (name.includes("thd")) {
+    return { icon: "⚠️", color: "#ea580c", category: "Power Quality" };
+  }
+  if (name.includes("current") || unit === "a") {
+    return { icon: "🔋", color: "#64748b", category: "Electrical" };
+  }
+  if (name.includes("kwh") || unit === "kwh") {
+    return { icon: "⚡", color: "#7c3aed", category: "Energy" };
+  }
+  if (name.includes("electric") || unit === "kw") {
+    return { icon: "⚡", color: "#2563eb", category: "Power" };
+  }
+  if (name.includes("steam")) {
+    return { icon: "♨️", color: "#f97316", category: "Steam" };
+  }
+  if (name.includes("fuel") || name.includes("diesel") || name.includes("gas")) {
+    return { icon: "⛽", color: "#dc2626", category: "Fuel" };
+  }
+
+  // ── Nouvelles mesures de la DataPlatform Al Youssoufia ──────────────────────
+  if (name.includes("reactive") || unit === "kvar") {
+    return { icon: "🔄", color: "#8b5cf6", category: "Electrical" };
+  }
+  if (name.includes("apparent") || unit === "kva") {
+    return { icon: "📐", color: "#6366f1", category: "Electrical" };
+  }
+  if (name.includes("breaker")) {
+    return { icon: "🔘", color: "#334155", category: "Equipment Status" };
+  }
+  if (name.includes("production")) {
+    return { icon: "🏭", color: "#b45309", category: "Production" };
+  }
+  if (name.includes("temperature") || unit === "°c") {
+    return { icon: "🌡️", color: "#dc2626", category: "Process" };
+  }
+  if (name.includes("pressure") || unit === "bar") {
+    return { icon: "🎚️", color: "#0e7490", category: "Process" };
+  }
+  if (name.includes("air")) {
+    return { icon: "💨", color: "#0891b2", category: "Compressed Air" };
+  }
+  if (name.includes("speed")) {
+    return { icon: "⚙️", color: "#475569", category: "Process" };
+  }
+
+  return { icon: "📡", color: "#475569", category: "DataPlatform KPI" };
+}
+
+// Unités qui s'ADDITIONNENT entre équipements (consommations, débits, puissances).
+// Les autres (°C, bar, %, on/off…) sont MOYENNÉES : une somme n'aurait pas de sens.
+const SUMMABLE_UNITS = new Set([
+  "kW", "kWh", "kVAR", "kVA", "m³", "m³/h", "t/h", "tonne", "L", "L/h", "kgCO2", "kg",
+]);
+
+function buildLatestKpis(energies = []) {
+  // 1) Dernier relevé par équipement + énergie
+  const byKey = new Map();
+  energies.forEach((e, index) => {
+    const key = `${e.line || ""}|${e.zone || ""}|${e.equipment || ""}|${e.name || ""}|${e.unit || ""}`;
+    const current = byKey.get(key);
+    const ts = e.timestamp ? new Date(e.timestamp).getTime() : index;
+    const cts = current?.timestamp ? new Date(current.timestamp).getTime() : -1;
+    if (!current || ts >= cts) byKey.set(key, e);
+  });
+
+  // 2) UNE SEULE carte par énergie : agrégation sur tous les équipements
+  //    de la ligne (somme ou moyenne selon l'unité) — plus de doublons.
+  const byEnergy = new Map();
+  [...byKey.values()].forEach((e) => {
+    const key = `${e.name || ""}|${e.unit || ""}`;
+    const current = byEnergy.get(key);
+    if (!current) {
+      byEnergy.set(key, {
+        ...e,
+        value: Number(e.value || 0),
+        cost: Number(e.cost || 0),
+        co2_kg: Number(e.co2_kg || 0),
+        count: 1,
+      });
+    } else {
+      current.value += Number(e.value || 0);
+      current.cost += Number(e.cost || 0);
+      current.co2_kg += Number(e.co2_kg || 0);
+      current.count += 1;
+      if (e.timestamp && (!current.timestamp || new Date(e.timestamp) > new Date(current.timestamp))) {
+        current.timestamp = e.timestamp;
+      }
+    }
+  });
+
+  return [...byEnergy.values()]
+    .map((e) => ({
+      ...e,
+      value: SUMMABLE_UNITS.has(e.unit || "") ? e.value : e.value / e.count,
+      equipment: e.count > 1 ? `${e.count} equipment` : e.equipment,
+    }))
+    .sort((a, b) => {
+      const priority = (e) => {
+        if ((e.unit || "") === "kW") return 1;
+        if ((e.unit || "") === "kWh") return 2;
+        if (isDirectCO2Measurement(e)) return 3;
+        if (isSecMeasurement(e)) return 4;
+        if ((e.name || "").toLowerCase().includes("water")) return 5;
+        if (isFlowMeasurement(e)) return 6;
+        if (isPowerQualityMeasurement(e)) return 7;
+        return 9;
+      };
+      return priority(a) - priority(b) || String(a.name).localeCompare(String(b.name));
+    });
+}
+
 function SECCalculator({ selectedLineLabel, totalCo2Kg, cumulativeKwh }) {
   const totalKwh = Number(cumulativeKwh || 0);
   const co2Kg = Number(totalCo2Kg || 0);
@@ -283,6 +486,18 @@ export default function Dashboard({
     .filter((e) => e.unit === "kW")
     .reduce((s, e) => s + Number(e.value || 0), 0);
 
+  // Totaux par énergie (somme sur les équipements de la ligne) — cartes
+  // principales : vapeur, fuel, eau et production (phosphate).
+  const sumByName = (needle) =>
+    energies
+      .filter((e) => String(e.name || "").toLowerCase() === needle)
+      .reduce((s, e) => s + Number(e.value || 0), 0);
+
+  const steamTotal     = sumByName("steam");            // tonnes (totalisateur)
+  const fuelTotal      = sumByName("fuel");             // litres (totalisateur)
+  const waterTotal     = sumByName("water");            // m³
+  const productionRate = sumByName("production rate");  // t/h (phosphate)
+
   const co2Display = totalCo2 > 0 ? totalCo2 : cumulativeKwh > 0 ? cumulativeKwh * 0.718 : 0;
 
   const MAX_KW = 300;
@@ -296,7 +511,35 @@ export default function Dashboard({
 
   const displayCost = totalCost > 0 ? totalCost : realCost;
 
-  const consumed = energies.filter((e) => !isCO2(e.name) && !isCumulative(e));
+  // KPI PRINCIPAUX uniquement — un par énergie, agrégé sur la ligne.
+  // Les mesures techniques (breaker, températures, pressions, vitesses,
+  // kVAR/kVA, débits internes…) restent dans leurs pages dédiées
+  // (Power Quality, Equipment Status, Real-Time Monitoring).
+  const MAIN_KPI_NAMES = new Set([
+    "electricity", "electricity-kwh", "co2-emissions", "sec",
+    "water", "steam", "fuel", "production rate",
+  ]);
+
+  // UNE entrée par énergie (agrégée sur tous les équipements de la ligne) —
+  // utilisée par toutes les sections "par énergie" du Dashboard pour rester
+  // lisible : plus de doublons Electricity ×7 ni de mesures techniques.
+  const aggregatedKpis = buildLatestKpis(energies);
+
+  const allDataPlatformKpis = aggregatedKpis.filter(
+    (e) => MAIN_KPI_NAMES.has(String(e.name || "").toLowerCase())
+  );
+
+  // "Cost by Energy Type" : uniquement les énergies FACTURABLES, agrégées.
+  const BILLABLE_NAMES = new Set([
+    "electricity", "electricity-kwh", "steam", "fuel", "water",
+    "hot water", "natural gas", "lpg", "diesel", "gasoline",
+  ]);
+  const billableMeasurements = aggregatedKpis.filter(
+    (e) => BILLABLE_NAMES.has(String(e.name || "").toLowerCase())
+  );
+
+  // Barres "Energy Performance" : les mêmes KPI principaux, agrégés.
+  const chartMeasurements = allDataPlatformKpis;
 
   const allEquipments = [];
 
@@ -373,12 +616,6 @@ export default function Dashboard({
           ● Live
         </span>
       </div>
-
-      <TagFilter
-        availableTags={availableTags}
-        selectedTag={selectedTag}
-        onTagSelect={onTagSelect}
-      />
 
       <section className="section-block">
         <div className="section-title-wrap">
@@ -488,8 +725,8 @@ export default function Dashboard({
             <div className="kpi-icon gold">💰</div>
             <div className="kpi-badge red">Live</div>
             <h3>{toMAD(displayCost)}</h3>
-            <p>Current Operating Cost</p>
-            <span>Active power × 1.40 MAD/kWh</span>
+            <p>Operating Cost</p>
+            <span>All billable energies — electricity, steam, fuel, water</span>
           </div>
 
           <div className="kpi-card">
@@ -499,6 +736,89 @@ export default function Dashboard({
             <p>Cumulative Energy</p>
             <span>Total energy counter (kWh)</span>
           </div>
+
+          {/* ── Énergies process de la DataPlatform (affichées si reçues) ── */}
+          {steamTotal > 0 && (
+            <div className="kpi-card">
+              <div className="kpi-icon orange">♨️</div>
+              <div className="kpi-badge amber">Live</div>
+              <h3>{steamTotal.toFixed(1)} t</h3>
+              <p>Steam Consumed</p>
+              <span>Steam meter totalizer (Utilities)</span>
+            </div>
+          )}
+
+          {fuelTotal > 0 && (
+            <div className="kpi-card">
+              <div className="kpi-icon red">⛽</div>
+              <div className="kpi-badge red">Live</div>
+              <h3>{fuelTotal.toFixed(1)} L</h3>
+              <p>Fuel Consumed</p>
+              <span>Fuel meter totalizer (Utilities)</span>
+            </div>
+          )}
+
+          {/* Eau : KPI principal — toujours visible */}
+          <div className="kpi-card">
+            <div className="kpi-icon blue">💧</div>
+            <div className="kpi-badge blue">Live</div>
+            <h3>{waterTotal > 0 ? `${waterTotal.toFixed(1)} m³` : "—"}</h3>
+            <p>Water Consumed</p>
+            <span>Flow meters + line total</span>
+          </div>
+
+          {productionRate > 0 && (
+            <div className="kpi-card">
+              <div className="kpi-icon emerald">⛏️</div>
+              <div className="kpi-badge green">Live</div>
+              <h3>{productionRate.toFixed(1)} t/h</h3>
+              <p>Production Rate</p>
+              <span>Phosphate — weigh belt scales</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="section-block">
+        <div className="section-title-wrap">
+          <h2>Key Energy KPIs</h2>
+          <p>
+            Main energy indicators from DataPlatform — {selectedLineLabel}
+            {allDataPlatformKpis.length === 0 && " — Waiting for data..."}
+          </p>
+        </div>
+
+        <div className="kpi-grid">
+          {allDataPlatformKpis.length > 0 ? (
+            allDataPlatformKpis.map((e) => {
+              const meta = getKpiMeta(e);
+              const updated = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : "—";
+              const tooltip = `${e.name}\nValue: ${formatNumber(e.value, 3)} ${e.unit || ""}\nPlant: ${e.plant || "—"}\nLine: ${e.line || "—"}\nZone: ${e.zone || e.area || "—"}\nEquipment: ${e.equipment || "—"}\nUpdated: ${updated}`;
+
+              return (
+                <div className="kpi-card" key={`${e.line}-${e.zone}-${e.equipment}-${e.name}-${e.unit}`} title={tooltip}>
+                  <div className="kpi-icon" style={{ background: `${meta.color}18`, color: meta.color }}>
+                    {meta.icon}
+                  </div>
+                  <div className="kpi-badge" style={{ background: meta.color }}>Live</div>
+                  <h3 style={{ color: meta.color }}>
+                    {formatNumber(e.value, 3)} {e.unit}
+                  </h3>
+                  <p>{e.name}</p>
+                  <span>
+                    {meta.category} · {e.equipment || "Equipment"} · {updated}
+                  </span>
+                </div>
+              );
+            })
+          ) : (
+            <div className="kpi-card">
+              <div className="kpi-icon blue">📡</div>
+              <h3>—</h3>
+              <p>No DataPlatform KPI yet</p>
+              <span>Start MQTT/Kafka data flow</span>
+            </div>
+          )}
         </div>
       </section>
 
@@ -520,6 +840,13 @@ export default function Dashboard({
             {displayEquipments.length === 0 && " — Waiting for DataPlatform..."}
           </p>
         </div>
+
+        {/* Filtre par tags — juste avant les équipements qu'il filtre */}
+        <TagFilter
+          availableTags={availableTags}
+          selectedTag={selectedTag}
+          onTagSelect={onTagSelect}
+        />
 
         <div className="equipment-grid">
           {displayEquipments.length > 0 ? (
@@ -588,15 +915,15 @@ export default function Dashboard({
           </div>
 
           <div className="zone-bars">
-            {consumed.length > 0 ? (
-              consumed.slice(0, 5).map((energy, i) => (
+            {chartMeasurements.length > 0 ? (
+              chartMeasurements.slice(0, 8).map((energy, i) => (
                 <div
                   key={energy.id}
                   className={`bar ${["purple", "blue", "green", "orange", "gray"][i % 5]}`}
                   style={{
                     height: `${Math.min(90, Math.max(10, (energy.value / (energy.max || 500)) * 100))}%`,
                   }}
-                  title={`${energy.name} — ${energy.value.toFixed(2)} ${energy.unit}`}
+                  title={`${energy.name}\n${energy.value.toFixed(2)} ${energy.unit}${energy.equipment ? `\n${energy.equipment}` : ""}${energy.timestamp ? `\n${new Date(energy.timestamp).toLocaleTimeString()}` : ""}`}
                 />
               ))
             ) : (
@@ -605,7 +932,7 @@ export default function Dashboard({
           </div>
 
           <div className="zone-labels">
-            {consumed.slice(0, 5).map((e) => (
+            {chartMeasurements.slice(0, 8).map((e) => (
               <span key={e.id}>{e.name.length > 12 ? e.name.slice(0, 10) + "…" : e.name}</span>
             ))}
           </div>
@@ -619,8 +946,8 @@ export default function Dashboard({
           </div>
 
           <div className="carbon-kpis">
-            {consumed.length > 0 ? (
-              consumed.map((e) => (
+            {billableMeasurements.length > 0 ? (
+              billableMeasurements.map((e) => (
                 <div className="carbon-card" key={e.id}>
                   <h4>{e.name}</h4>
                   <strong style={{ color: "#d69e2e" }}>{toMAD(e.cost || 0)}</strong>
@@ -633,7 +960,7 @@ export default function Dashboard({
               <div className="carbon-card">
                 <h4>No data</h4>
                 <strong>—</strong>
-                <span>Waiting for DataPlatform</span>
+                <span>Waiting for billable DataPlatform data</span>
               </div>
             )}
           </div>

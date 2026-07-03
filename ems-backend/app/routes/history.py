@@ -3,11 +3,13 @@ from sqlalchemy import desc, func, distinct
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
+from app.core.deps import get_current_active_user
 from app.db import get_db
 from app.models import TelemetryRecord
 from app.utils import calculate_cost, calculate_co2
 
-router = APIRouter(prefix="/api/history", tags=["history"])
+router = APIRouter(prefix="/api/history", tags=["history"],
+                   dependencies=[Depends(get_current_active_user)])
 
 ELEC_RATE_MAD = 1.40          # tarif électricité ONEE
 CO2_FACTOR    = 0.718         # facteur ONEE Maroc
@@ -21,13 +23,33 @@ ENERGY_FILTERS = {
 }
 
 
-def filtered_query(db, line_name, energy_name, start=None):
+def apply_context_filters(q, plant: str | None = None, zone: str | None = None, equipment: str | None = None, tag: str | None = None):
+    """Filtre commun Plant / Zone / Equipment / Tag.
+
+    Le tag vient de la DataPlatform et il est stocke dans telemetry_records.tags
+    sous forme de chaine separee par virgules: "pump,critical,water".
+    """
+    if plant:
+        q = q.filter(TelemetryRecord.plant.ilike(plant))
+    if zone:
+        q = q.filter(TelemetryRecord.area.ilike(zone))
+    if equipment:
+        q = q.filter(TelemetryRecord.equipment.ilike(equipment))
+    if tag:
+        tag_clean = tag.strip().lower()
+        q = q.filter(TelemetryRecord.tags.ilike(f"%{tag_clean}%"))
+    return q
+
+
+def filtered_query(db, line_name, energy_name, start=None, plant=None, zone=None, equipment=None, tag=None):
     q = db.query(TelemetryRecord).filter(
         TelemetryRecord.production_line == line_name,
         TelemetryRecord.source != "simulator",
     )
     if start is not None:
         q = q.filter(TelemetryRecord.timestamp >= start)
+
+    q = apply_context_filters(q, plant=plant, zone=zone, equipment=equipment, tag=tag)
 
     target = ENERGY_FILTERS.get(energy_name)
     if target:
@@ -45,6 +67,10 @@ def get_aggregated_history(
     line_name:   str,
     period:      str = Query(default="day", enum=["hour", "day", "week", "month", "year"]),
     energy_name: str = Query(default="Electricity"),
+    plant: str | None = Query(default=None),
+    zone: str | None = Query(default=None),
+    equipment: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     now    = datetime.utcnow()
@@ -57,7 +83,10 @@ def get_aggregated_history(
     }
     start = ranges[period]
 
-    records = filtered_query(db, line_name, energy_name, start).order_by(TelemetryRecord.timestamp).all()
+    records = filtered_query(
+        db, line_name, energy_name, start,
+        plant=plant, zone=zone, equipment=equipment, tag=tag,
+    ).order_by(TelemetryRecord.timestamp).all()
 
     if not records:
         return {
@@ -105,6 +134,10 @@ def get_aggregated_history(
 def get_comparison(
     line_name:   str,
     energy_name: str = Query(default="Electricity"),
+    plant: str | None = Query(default=None),
+    zone: str | None = Query(default=None),
+    equipment: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     now             = datetime.utcnow()
@@ -114,7 +147,10 @@ def get_comparison(
 
     def get_records(start, end):
         return (
-            filtered_query(db, line_name, energy_name, start)
+            filtered_query(
+                db, line_name, energy_name, start,
+                plant=plant, zone=zone, equipment=equipment, tag=tag,
+            )
             .filter(TelemetryRecord.timestamp < end)
             .order_by(TelemetryRecord.timestamp)
             .all()
@@ -157,6 +193,10 @@ def get_comparison(
 @router.get("/summary")
 def get_all_lines_summary(
     period: str = Query(default="day", enum=["hour", "day", "week", "month"]),
+    plant: str | None = Query(default=None),
+    zone: str | None = Query(default=None),
+    equipment: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     now   = datetime.utcnow()
@@ -171,13 +211,19 @@ def get_all_lines_summary(
     result = {}
 
     for line in sorted(lines):
-        records = (
+        records_query = (
             db.query(TelemetryRecord)
             .filter(
                 TelemetryRecord.production_line == line,
                 TelemetryRecord.timestamp       >= start,
                 TelemetryRecord.source          != "simulator",
             )
+        )
+        records_query = apply_context_filters(
+            records_query, plant=plant, zone=zone, equipment=equipment, tag=tag
+        )
+        records = (
+            records_query
             .order_by(desc(TelemetryRecord.timestamp))
             .limit(200)
             .all()
@@ -193,15 +239,18 @@ def get_all_lines_summary(
         consumption_kwh = max(0.0, kwh_end - kwh_start)
 
         # Compteur cumulé TOTAL (depuis toujours) pour cette ligne
-        cumulative_kwh = (
+        cumulative_query = (
             db.query(func.max(TelemetryRecord.value))
             .filter(
                 TelemetryRecord.production_line == line,
                 TelemetryRecord.unit == "kWh",
                 TelemetryRecord.source != "simulator",
             )
-            .scalar()
-        ) or 0.0
+        )
+        cumulative_query = apply_context_filters(
+            cumulative_query, plant=plant, zone=zone, equipment=equipment, tag=tag
+        )
+        cumulative_kwh = cumulative_query.scalar() or 0.0
 
         # Coûts
         period_cost     = round(consumption_kwh * ELEC_RATE_MAD, 2)   # conso de la période

@@ -1,6 +1,42 @@
 import { useEffect, useMemo, useState } from "react";
 import { Building2, Filter, CloudSun, X } from "lucide-react";
 
+// ─── Composants du panneau de filtres ────────────────────────────────────────
+// IMPORTANT : définis HORS du composant Header. À l'intérieur, ils seraient
+// recréés à chaque re-render (l'horloge tick chaque seconde) → React
+// démonterait/remonterait le panneau → le scroll remonterait tout seul.
+const DropPanel = ({ children, onClose, title }) => (
+  <div className="filter-panel" style={{ minWidth: "260px" }}>
+    <div className="filter-panel-head">
+      <span style={{ fontWeight: 700, fontSize: "0.88rem" }}>{title}</span>
+      <button
+        type="button"
+        onClick={onClose}
+        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)" }}
+      >
+        <X size={14} />
+      </button>
+    </div>
+    {children}
+  </div>
+);
+
+const SectionTitle = ({ children }) => (
+  <div style={{ fontWeight: 700, fontSize: "0.8rem", color: "var(--text-main)", marginBottom: "0.4rem" }}>
+    {children}
+  </div>
+);
+
+const Row = ({ checked, onChange, label, group }) => (
+  <label
+    className="filter-option-row"
+    style={{ cursor: "pointer", padding: "5px 0", display: "flex", gap: "8px", alignItems: "center" }}
+  >
+    <input type="radio" name={group} checked={checked} onChange={onChange} style={{ accentColor: "#2563eb" }} />
+    <span style={{ fontWeight: checked ? 700 : 400, fontSize: "0.86rem" }}>{label}</span>
+  </label>
+);
+
 export default function Header({
   user,
   onLogout,
@@ -96,38 +132,6 @@ export default function Header({
   const breadcrumb = [plant || "All Plants", line, zone, equipment]
     .filter(Boolean)
     .join(" · ");
-
-  const DropPanel = ({ children, onClose, title }) => (
-    <div className="filter-panel" style={{ minWidth: "260px" }}>
-      <div className="filter-panel-head">
-        <span style={{ fontWeight: 700, fontSize: "0.88rem" }}>{title}</span>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)" }}
-        >
-          <X size={14} />
-        </button>
-      </div>
-      {children}
-    </div>
-  );
-
-  const SectionTitle = ({ children }) => (
-    <div style={{ fontWeight: 700, fontSize: "0.8rem", color: "var(--text-main)", marginBottom: "0.4rem" }}>
-      {children}
-    </div>
-  );
-
-  const Row = ({ checked, onChange, label, group }) => (
-    <label
-      className="filter-option-row"
-      style={{ cursor: "pointer", padding: "5px 0", display: "flex", gap: "8px", alignItems: "center" }}
-    >
-      <input type="radio" name={group} checked={checked} onChange={onChange} style={{ accentColor: "#2563eb" }} />
-      <span style={{ fontWeight: checked ? 700 : 400, fontSize: "0.86rem" }}>{label}</span>
-    </label>
-  );
 
   return (
     <div className="header-bar">

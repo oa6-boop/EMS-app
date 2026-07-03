@@ -9,6 +9,19 @@ from app.models import AuditLog, User
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 VALID_ROLES = ["admin", "management", "maintenance", "operator"]
+MIN_PASSWORD_LENGTH = 6
+ALLOWED_EMAIL_DOMAIN = "@jesagroup.com"
+
+
+def is_valid_jesa_email(email: str) -> bool:
+    """Email valide = partie locale non vide + domaine @jesagroup.com, sans espace."""
+    if not email or " " in email:
+        return False
+    if not email.endswith(ALLOWED_EMAIL_DOMAIN):
+        return False
+    local_part = email[: -len(ALLOWED_EMAIL_DOMAIN)]
+    return len(local_part) > 0
+
 
 def user_to_dict(u: User) -> dict:
     return {
@@ -32,8 +45,29 @@ def get_me(
     return user_to_dict(current_user)
 
 
-# ─── PATCH /api/users/me/profile ─────────────────────────────────────────────
-# L'utilisateur change son prénom, nom, et/ou mot de passe
+
+@router.get("/technicians")
+def list_technicians(
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_active_user),
+):
+    technicians = (
+        db.query(User)
+        .filter(User.role == "maintenance", User.is_active == True)
+        .order_by(User.first_name, User.last_name)
+        .all()
+    )
+    return [
+        {
+            "id": t.id,
+            "name": f"{t.first_name} {t.last_name}".strip(),
+            "email": t.email,
+        }
+        for t in technicians
+    ]
+
+
+
 @router.patch("/me/profile")
 def update_my_profile(
     payload:      dict,
@@ -54,10 +88,10 @@ def update_my_profile(
 
     # ── Changer le mot de passe si fourni ────────────────────────────────────
     if password:
-        if len(password) < 6:
+        if len(password) < MIN_PASSWORD_LENGTH:
             raise HTTPException(
                 status_code=400,
-                detail="Password must be at least 6 characters"
+                detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters"
             )
         current_user.hashed_password = get_password_hash(password)
 
@@ -98,8 +132,14 @@ def create_user(
     if not first_name or not last_name or not email or not password:
         raise HTTPException(status_code=400, detail="All fields are required")
 
-    if not email.endswith("@jesagroup.com"):
-        raise HTTPException(status_code=400, detail="Only @jesagroup.com emails are allowed")
+    if not is_valid_jesa_email(email):
+        raise HTTPException(status_code=400, detail="Only valid @jesagroup.com emails are allowed")
+
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+        )
 
     if role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"Invalid role. Valid: {VALID_ROLES}")
@@ -147,6 +187,8 @@ def update_user_role(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_admin.id:
+        raise HTTPException(status_code=400, detail="You cannot change your own role")
     if user.role == "admin":
         raise HTTPException(status_code=400, detail="Cannot change admin role")
 
@@ -177,6 +219,8 @@ def delete_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_admin.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
     if user.role == "admin":
         raise HTTPException(status_code=400, detail="Cannot delete admin")
 
@@ -189,6 +233,30 @@ def delete_user(
         ))
     except Exception:
         pass
+
+    # Nettoyage des donnees liees AVANT suppression, pour eviter une erreur
+    # d'integrite (FK) : messages envoyes + conversations creees par ce user.
+    # Import local pour ne pas alourdir le module.
+    from app.models import Message, Conversation, ConversationParticipant
+
+    db.query(Message).filter(Message.sender_id == user.id).delete(
+        synchronize_session=False
+    )
+    db.query(ConversationParticipant).filter(
+        ConversationParticipant.user_id == user.id
+    ).delete(synchronize_session=False)
+
+    created_convs = db.query(Conversation).filter(
+        Conversation.created_by == user.id
+    ).all()
+    for conv in created_convs:
+        db.query(Message).filter(Message.conversation_id == conv.id).delete(
+            synchronize_session=False
+        )
+        db.query(ConversationParticipant).filter(
+            ConversationParticipant.conversation_id == conv.id
+        ).delete(synchronize_session=False)
+        db.delete(conv)
 
     db.delete(user)
     db.commit()

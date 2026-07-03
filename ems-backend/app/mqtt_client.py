@@ -7,7 +7,13 @@ import re
 from datetime import datetime
 
 import paho.mqtt.client as mqtt
-from kafka import KafkaConsumer
+
+# Kafka est OPTIONNEL (alarmes Flink uniquement). Si la lib n'est pas
+# installée, le backend démarre quand même : MQTT reste la source principale.
+try:
+    from kafka import KafkaConsumer
+except ImportError:
+    KafkaConsumer = None
 
 from app.core.config import MQTT_BROKER, MQTT_PORT, MQTT_TOPIC
 from app.db import SessionLocal
@@ -63,42 +69,92 @@ POWER_QUALITY_KEYS = {
 }
 
 # ── ADAPTER DATAPLATFORM ──────────────────────────────────────────────────────
-# La DataPlatform finale n'est pas figée. Le flow Node-RED actuel envoie
-# voltage_V / frequency_Hz / current_A / active_energy_kWh, mais le schéma
-# Avro du repo (payload.json) prévoit frequency_hz, voltage_v1/v2/v3,
-# current_a, active_energy_kwh (minuscules + tension triphasée) et un
-# timestamp epoch (long). Cet adapter normalise TOUTES ces variantes vers
-# les clés canoniques du backend, en INSENSIBLE À LA CASSE, pour que
-# l'ingestion fonctionne quel que soit le format final livré par l'équipe.
+# Adapter robuste pour la DataPlatform finale.
+# Objectif : accepter les payloads MQTT/Kafka actuels ou futurs sans modifier
+# l'application à chaque nouvelle mesure. La hiérarchie reste :
+# Plant → Line → Zone/Area → Equipment.
+# Les mesures inconnues sont conservées et affichées comme nouveaux KPI.
 
-CANONICAL_MEASUREMENT_KEYS = {
-    # clé canonique  →  alias acceptés (comparés en minuscules)
-    "frequency_Hz":      {"frequency_hz", "frequency", "freq_hz", "freq"},
-    "voltage_V":         {"voltage_v", "voltage", "volt", "u_v", "tension"},
-    "current_A":         {"current_a", "current", "i_a", "courant"},
-    "power_factor":      {"power_factor", "pf", "cos_phi", "cosphi"},
-    "thd_voltage_pct":   {"thd_voltage_pct", "thd_v_pct", "thd_voltage", "thd_v"},
-    "thd_current_pct":   {"thd_current_pct", "thd_i_pct", "thd_current", "thd_i"},
-    "active_energy_kWh": {"active_energy_kwh", "energy_kwh", "kwh_total",
-                          "active_energy", "total_energy_kwh"},
+POWER_QUALITY_KEYS = {
+    "frequency_Hz",
+    "voltage_V",
+    "current_A",
+    "power_factor",
+    "thd_voltage_pct",
+    "thd_current_pct",
 }
 
-# Tensions triphasées du schéma Avro → moyennées en voltage_V
-THREE_PHASE_VOLTAGE_KEYS = {"voltage_v1", "voltage_v2", "voltage_v3"}
-
-# Clés racine qui sont des métadonnées, PAS des mesures (pour payload "plat")
+# Champs qui ne sont pas des mesures quand le payload est plat.
 PAYLOAD_META_KEYS = {
     "device_id", "device_name", "meter_id", "id", "timestamp", "schema",
     "source", "plant", "plant_name", "site", "unit", "unit_name", "workshop",
     "line", "line_name", "production_line", "area", "zone", "area_name",
-    "equipment", "equipment_name", "tags", "labels",
+    "equipment", "equipment_name", "equipment_id", "tags", "labels",
+    "measurement_name", "type", "status", "raw_topic", "mqtt_topic",
 }
 
-# ── TAGS EQUIPEMENT ───────────────────────────────────────────────────────────
-# Si la DataPlatform envoie un champ "tags" (liste ou chaine "a,b,c") ou
-# "labels", on l'utilise tel quel. Sinon, fallback par meter pour que la
-# fonctionnalite soit demontrable des aujourd'hui — remplace automatiquement
-# des que la DataPlatform finale enverra de vrais tags.
+# Tensions et courants triphasés : moyenne pour alimenter Power Quality.
+THREE_PHASE_VOLTAGE_KEYS = {
+    "voltage_v1", "voltage_v2", "voltage_v3",
+    "voltage_l1n", "voltage_l2n", "voltage_l3n",
+    "voltage_l1l2", "voltage_l2l3", "voltage_l3l1",
+}
+THREE_PHASE_CURRENT_KEYS = {"current_l1", "current_l2", "current_l3"}
+
+CANONICAL_MEASUREMENT_KEYS = {
+    "frequency_Hz": {
+        "frequency_hz", "frequency", "freq_hz", "freq",
+    },
+    "voltage_V": {
+        "voltage_v", "voltage", "volt", "u_v", "tension",
+    },
+    "current_A": {
+        "current_a", "current", "i_a", "courant",
+    },
+    "power_factor": {
+        "power_factor", "pf", "cos_phi", "cosphi",
+    },
+    "thd_voltage_pct": {
+        "thd_voltage_pct", "thd_v_pct", "thd_voltage", "thd_v",
+    },
+    "thd_current_pct": {
+        "thd_current_pct", "thd_i_pct", "thd_current", "thd_i",
+    },
+    "active_energy_kWh": {
+        "active_energy_kwh", "energy_kwh", "kwh_total", "active_energy",
+        "total_energy_kwh", "energy_consumption_kwh", "consumption_kwh",
+    },
+    "active_power_kW": {
+        "active_power_kw", "active_power", "power_kw", "kw", "p_kw",
+    },
+    "reactive_power_kVAR": {
+        "reactive_power_kvar", "reactive_power", "kvar", "q_kvar",
+    },
+    "apparent_power_kVA": {
+        "apparent_power_kva", "apparent_power", "kva", "s_kva",
+    },
+    "co2_kg": {
+        "co2_kg", "co2", "co2_emissions", "co2_emission", "carbon_kg",
+        "carbon_emissions", "emissions_co2", "kgco2",
+    },
+    "sec_kWh_per_unit": {
+        "sec", "specific_energy_consumption", "sec_kwh_per_unit",
+        "sec_kwh_per_ton", "specific_energy_kwh_t",
+    },
+    "production_quantity": {
+        "production_quantity", "production_qty", "production", "production_ton",
+        "production_t", "output_ton", "output_quantity",
+    },
+    "water_m3": {
+        "water_m3", "total_water_m3", "water_consumption", "water_consumption_m3",
+        "volume_totalised_m3", "volume_totalized_m3",
+    },
+    "flow_rate": {
+        "flow", "instant_flow", "flow_rate", "water_flow", "air_flow",
+        "steam_flow_rate", "fuel_flow_rate",
+    },
+}
+
 DEFAULT_METER_TAGS = {
     1: "pump,critical",
     2: "motor,production",
@@ -110,45 +166,175 @@ DEFAULT_METER_TAGS = {
     8: "motor,auxiliary",
 }
 
+# Tags intelligents generes cote backend quand la DataPlatform ne fournit pas
+# directement un champ `tags`. La logique garde les tags envoyes par la
+# DataPlatform, puis ajoute des tags issus de la hierarchie MQTT et du nom
+# d'equipement : Plant / Line / Zone / Equipment / device_id.
+SEMANTIC_TAG_RULES = {
+    "motor": ["motor", "moteur", "mtr"],
+    "pump": ["pump", "pompe"],
+    "fan": ["fan", "ventilateur", "cooling_fan"],
+    "hvac": ["hvac", "cooling", "chiller", "air_conditioning"],
+    "conveyor": ["conveyor", "convoyeur", "belt", "belt_conveyor"],
+    "crusher": ["crusher", "crushing", "broyeur", "grinder"],
+    "compressor": ["compressor", "compresseur"],
+    "blower": ["blower", "soufflante"],
+    "valve": ["valve", "vanne"],
+    "tank": ["tank", "reservoir", "storage_tank"],
+    "mixer": ["mixer", "agitator", "melangeur"],
+    "feeder": ["feeder", "alimentateur"],
+    "screen": ["screen", "sieve", "criblage"],
+    "separator": ["separator", "separateur"],
+    "lighting": ["lighting", "light", "eclairage"],
+    "water": ["water", "eau", "washing", "wash", "slurry"],
+    "steam": ["steam", "vapeur"],
+    "air": ["compressed_air", "air"],
+    "fuel": ["fuel", "gas", "diesel", "gaz"],
+    "electrical": ["pm", "power_meter", "meter", "electrical", "electric"],
+}
 
-def extract_tags(raw: dict, meter_id: int) -> str | None:
-    """Retourne les tags en chaine 'a,b,c' (minuscules, sans doublons)."""
+
+def clean_name(value, default=""):
+    text = str(value or "").strip()
+    if not text:
+        return default
+    return text.replace("_", " ").replace("-", " ").strip()
+
+
+# ── NORMALISATION ANTI-DOUBLONS ───────────────────────────────────────────────
+# Le topic et le payload de la DataPlatform écrivent la hiérarchie sous des
+# formes différentes (LINE-1 / Line-1 / Line 1, EXTRACTION / Extraction…).
+# Sans normalisation unique, les filtres affichent des zones et des lignes
+# en double. Ces fonctions imposent UNE forme canonique, quelle que soit la
+# source. Elles sont aussi utilisées par la migration de nettoyage (main.py).
+
+def _clean_display(value: str) -> str:
+    """'EXTRACTION' → 'Extraction' ; 'STORAGE_HANDLING' → 'Storage Handling'."""
+    s = str(value or "").replace("_", " ").replace("-", " ").strip()
+    if s.isupper():
+        s = s.title()
+    return s
+
+
+def _normalize_line_name(value: str) -> str:
+    """'LINE-1' / 'Line 1' / 'line_1' → 'Production Line 1' (forme unique)."""
+    m = re.search(r"line[\s_-]*(\d+)", str(value or ""), re.IGNORECASE)
+    if m:
+        return f"Production Line {m.group(1)}"
+    return _clean_display(value)
+
+
+def _normalize_area(value: str) -> str:
+    """
+    Zones : forme canonique. Les agrégats de ligne (Total_water_consumption,
+    Energy_consumption) sont regroupés sous la zone unique 'Line Total'.
+    """
+    low = str(value or "").strip().lower().replace("_", " ").replace("-", " ")
+    if low.startswith(("energy consumption", "total water")):
+        return "Line Total"
+    return _clean_display(value)
+
+
+def normalize_tag(value) -> str:
+    """Retourne un tag stable, minuscule, sans espaces ni caracteres inutiles."""
+    import re
+
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = text.replace("#", "")
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text
+
+
+def add_tag(tags: list[str], value) -> None:
+    tag = normalize_tag(value)
+    if tag and tag not in tags:
+        tags.append(tag)
+
+
+def extract_provided_tags(raw: dict) -> list[str]:
     value = raw.get("tags")
     if value is None:
         value = raw.get("labels")
 
-    tags = []
-    if isinstance(value, (list, tuple)):
-        tags = [str(t).strip().lower() for t in value if str(t).strip()]
-    elif isinstance(value, str) and value.strip():
-        tags = [t.strip().lower() for t in value.split(",") if t.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [normalize_tag(t) for t in value if normalize_tag(t)]
 
-    if not tags:
-        fallback = DEFAULT_METER_TAGS.get(meter_id)
-        return fallback
+    if isinstance(value, str) and value.strip():
+        return [normalize_tag(t) for t in value.split(",") if normalize_tag(t)]
 
-    # dedoublonnage en preservant l'ordre
-    seen, unique = set(), []
-    for t in tags:
-        if t not in seen:
-            seen.add(t)
-            unique.append(t)
-    return ",".join(unique)
+    return []
+
+
+def infer_semantic_tags(text: str) -> list[str]:
+    """Detecte les types d'equipements : motor, pump, fan, conveyor, etc."""
+    normalized_text = normalize_tag(text)
+    if not normalized_text:
+        return []
+
+    found = []
+    padded = f"_{normalized_text}_"
+    for tag, keywords in SEMANTIC_TAG_RULES.items():
+        for keyword in keywords:
+            kw = normalize_tag(keyword)
+            if not kw:
+                continue
+            # Match exact token inside names like water_pump_a or main_motor_01.
+            if f"_{kw}_" in padded or normalized_text == kw:
+                found.append(tag)
+                break
+    return found
+
+
+def extract_tags(raw: dict, meter_id: int, topic_topology: dict | None = None, equipment: str | None = None) -> str | None:
+    tags: list[str] = []
+
+    for tag in extract_provided_tags(raw):
+        add_tag(tags, tag)
+
+    topic_topology = topic_topology or {}
+
+    hierarchy_values = [
+        raw.get("plant") or raw.get("plant_name") or raw.get("site") or topic_topology.get("plant"),
+        raw.get("production_line") or raw.get("line") or raw.get("line_name") or topic_topology.get("production_line"),
+        raw.get("area") or raw.get("zone") or raw.get("area_name") or topic_topology.get("area"),
+        equipment,
+        raw.get("equipment") or raw.get("equipment_name") or raw.get("device_name"),
+        raw.get("device_id") or raw.get("meter_id"),
+        topic_topology.get("measurement_name"),
+    ]
+    for value in hierarchy_values:
+        add_tag(tags, value)
+
+    semantic_source = " ".join(str(v or "") for v in hierarchy_values)
+    for tag in infer_semantic_tags(semantic_source):
+        add_tag(tags, tag)
+
+    if not tags and meter_id in DEFAULT_METER_TAGS:
+        for tag in DEFAULT_METER_TAGS[meter_id].split(","):
+            add_tag(tags, tag)
+
+    return ",".join(tags) if tags else None
+
+
+def safe_float(value, default=None):
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except Exception:
+        return default
 
 
 def normalize_measurements(measurements: dict) -> dict:
-    """
-    Normalise les clés de mesures vers les noms canoniques du backend.
-    - insensible à la casse (voltage_V == voltage_v == VOLTAGE_V)
-    - moyenne voltage_v1/v2/v3 (triphasé Avro) en voltage_V unique
-    - les clés inconnues (water_m3, steam_kg, ...) sont conservées telles
-      quelles : elles sont traitées comme énergies additionnelles plus loin.
-    """
     if not isinstance(measurements, dict):
         return {}
 
     normalized = {}
     phase_voltages = []
+    phase_currents = []
 
     for raw_key, value in measurements.items():
         key_lower = str(raw_key).strip().lower()
@@ -157,6 +343,15 @@ def normalize_measurements(measurements: dict) -> dict:
             v = safe_float(value)
             if v is not None:
                 phase_voltages.append(v)
+            # garder aussi la mesure originale comme KPI détaillé
+            normalized[raw_key] = value
+            continue
+
+        if key_lower in THREE_PHASE_CURRENT_KEYS:
+            i = safe_float(value)
+            if i is not None:
+                phase_currents.append(i)
+            normalized[raw_key] = value
             continue
 
         matched = False
@@ -170,70 +365,54 @@ def normalize_measurements(measurements: dict) -> dict:
             normalized[raw_key] = value
 
     if phase_voltages and "voltage_V" not in normalized:
-        normalized["voltage_V"] = round(
-            sum(phase_voltages) / len(phase_voltages), 2
-        )
+        normalized["voltage_V"] = round(sum(phase_voltages) / len(phase_voltages), 3)
+
+    if phase_currents and "current_A" not in normalized:
+        normalized["current_A"] = round(sum(phase_currents) / len(phase_currents), 3)
 
     return normalized
 
 
 def extract_measurements(raw: dict) -> dict:
-    """
-    Récupère le bloc de mesures, que le payload soit :
-    - imbriqué  : {"device_id": ..., "measurements": {...}}  (format actuel)
-    - plat      : {"device_id": ..., "voltage_V": 230, ...}  (variante possible)
-    Retourne {} si aucune mesure numérique n'est trouvée.
-    """
+    """Accepte payload imbriqué, payload plat, ou steam/fuel nested."""
     measurements = raw.get("measurements")
 
     if isinstance(measurements, dict) and measurements:
         return measurements
 
-    # Payload plat : toute clé numérique non-métadonnée est une mesure
-    return {
-        key: value
-        for key, value in raw.items()
-        if key not in PAYLOAD_META_KEYS and isinstance(value, (int, float))
-    }
+    # Steam/fuel nested payload : {steam:{flow_rate...}, fuel:{...}}
+    extracted = {}
+    for prefix in ["steam", "fuel"]:
+        block = raw.get(prefix)
+        if isinstance(block, dict):
+            for key, value in block.items():
+                if isinstance(value, (int, float)):
+                    extracted[f"{prefix}_{key}"] = value
+
+    for key, value in raw.items():
+        if str(key).lower() not in PAYLOAD_META_KEYS and isinstance(value, (int, float)):
+            extracted[key] = value
+
+    return extracted
+
 
 _kafka_consumers_started = False
-
-# Event loop principal de FastAPI — capturé au démarrage (main.py).
-# Indispensable : les callbacks MQTT (paho) et Kafka tournent dans des
-# threads séparés SANS event loop asyncio. asyncio.create_task() y échoue
-# silencieusement. On utilise run_coroutine_threadsafe vers ce loop.
 MAIN_LOOP = None
 
 
 def set_main_loop(loop) -> None:
-    """Appelé par main.py au startup pour enregistrer le loop FastAPI."""
     global MAIN_LOOP
     MAIN_LOOP = loop
 
 
-def safe_float(value, default=None):
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except Exception:
-        return default
-
-
 def parse_datetime(value):
-    """
-    Accepte les deux formats de timestamp possibles de la DataPlatform :
-    - ISO 8601 string ("2026-06-10T12:00:00Z") — flow Node-RED actuel
-    - epoch numérique en secondes OU millisecondes — schéma Avro ("timestamp": long)
-    """
     if value is None or value == "":
         return datetime.utcnow()
 
-    # Epoch numérique (int/float ou string de chiffres)
     if isinstance(value, (int, float)) or str(value).strip().isdigit():
         try:
             ts = float(value)
-            if ts > 1e12:          # millisecondes → secondes
+            if ts > 1e12:
                 ts /= 1000.0
             return datetime.utcfromtimestamp(ts)
         except Exception:
@@ -242,10 +421,8 @@ def parse_datetime(value):
     try:
         cleaned = str(value).replace("Z", "+00:00")
         dt = datetime.fromisoformat(cleaned)
-
         if dt.tzinfo is not None:
             return dt.replace(tzinfo=None)
-
         return dt
     except Exception:
         return datetime.utcnow()
@@ -253,37 +430,21 @@ def parse_datetime(value):
 
 def get_meter_id(topic: str = "", raw: dict | None = None) -> int:
     raw = raw or {}
-
-    for candidate in [
-        raw.get("meter_id"),
-        raw.get("device_id"),
-        raw.get("id"),
-    ]:
+    for candidate in [raw.get("meter_id"), raw.get("device_id"), raw.get("id")]:
         if candidate is None:
             continue
-
         digits = "".join(ch for ch in str(candidate) if ch.isdigit())
-
         if digits:
             return int(digits)
 
-    try:
-        return int(str(topic).split("/")[-1])
-    except Exception:
-        return 1
+    # dernier segment avec chiffres: PM1, Motor-03, etc.
+    for segment in reversed(str(topic).split("/")):
+        digits = "".join(ch for ch in segment if ch.isdigit())
+        if digits:
+            return int(digits)
+    return 1
 
 
-# ── HIERARCHIE : Plant → Line → Zone → Equipment ──────────────────────────────
-# Les noms reels viennent de la DataPlatform si elle les envoie (priorite dans
-# extract_topology / alarm_topology). Sinon, fallback calcule ci-dessous, qui
-# s'etend automatiquement quand de nouveaux meters arrivent.
-#
-# Layout (2 meters/zone, 2 zones/line, 2 lines/plant) :
-#   Plant 1 ─ Line 1 ─ Zone A (PM-001, PM-002)
-#                    └ Zone B (PM-003, PM-004)
-#           └ Line 2 ─ Zone C (PM-005, PM-006)
-#                    └ Zone D (PM-007, PM-008)
-#   Plant 2 ─ Line 3 ─ Zone E (PM-009, PM-010) ... etc, automatiquement.
 METERS_PER_ZONE = 2
 ZONES_PER_LINE = 2
 LINES_PER_PLANT = 2
@@ -312,31 +473,17 @@ def get_unit_name(meter_id: int) -> str:
 def get_ws_manager():
     try:
         from app.routes.websocket import manager
-
         return manager
     except Exception:
         return None
 
 
 def broadcast_ws(payload: dict) -> None:
-    """
-    Diffuse un message WebSocket depuis n'importe quel thread.
-
-    Les callbacks paho-mqtt et kafka-python s'exécutent dans leurs propres
-    threads (sans event loop asyncio). Dans ces threads,
-    asyncio.get_event_loop() lève RuntimeError et create_task() exige un
-    loop déjà en cours — l'ancienne version ne diffusait donc JAMAIS rien.
-    run_coroutine_threadsafe planifie la coroutine sur le loop principal
-    de FastAPI, capturé au démarrage via set_main_loop().
-    """
     ws = get_ws_manager()
-
     if not ws or not getattr(ws, "active_connections", None):
         return
-
     if MAIN_LOOP is None or MAIN_LOOP.is_closed():
         return
-
     try:
         asyncio.run_coroutine_threadsafe(ws.broadcast(payload), MAIN_LOOP)
     except Exception as exc:
@@ -346,108 +493,256 @@ def broadcast_ws(payload: dict) -> None:
 def normalize_energy_name(key: str) -> str:
     replacements = {
         "active_energy_kWh": "Electricity-kWh",
-        "electricity_kwh": "Electricity-kWh",
-        "electricity_kw": "Electricity",
+        "energy_consumption_kWh": "Electricity-kWh",
         "active_power_kW": "Electricity",
-        "active_power_kw": "Electricity",
-        "power_kw": "Electricity",
-
         "co2_kg": "CO2-Emissions",
-        "co2_emissions": "CO2-Emissions",
-        "carbon_kg": "CO2-Emissions",
-
+        "sec_kWh_per_unit": "SEC",
         "water_m3": "Water",
-        "eau_m3": "Water",
-        "steam_kg": "Steam",
-        "steam_ton": "Steam",
-        "gas_m3": "Natural Gas",
-        "natural_gas_m3": "Natural Gas",
-        "diesel_l": "Diesel",
-        "fuel_l": "Fuel",
-        "solar_kWh": "Solar",
-        "solar_kwh": "Solar",
-        "compressed_air_m3": "Compressed Air",
+        "flow_rate": "Flow Rate",
+        "reactive_power_kVAR": "Reactive Power",
+        "apparent_power_kVA": "Apparent Power",
+        "steam_flow_rate": "Steam Flow",
+        "steam_totalizer": "Steam",
+        "fuel_flow_rate": "Fuel Flow",
+        "fuel_totalizer": "Fuel",
+        "production_quantity": "Production Quantity",
     }
-
     if key in replacements:
         return replacements[key]
 
     name = str(key).strip()
-    name = re.sub(r"(_kwh|_kWh|_kw|_kW|_m3|_kg|_l|_L|_pct)$", "", name)
+    name = re.sub(r"(_kwh|_kw|_kvar|_kva|_m3|_kg|_l|_pct|_hz|_a|_v)$", "", name, flags=re.I)
     name = name.replace("_", " ").replace("-", " ").strip().title()
-
     return name or key
 
 
 def infer_unit(key: str) -> str:
     lower = str(key).lower()
-
+    if "sec" in lower:
+        return "kWh/unit"
     if "kwh" in lower:
         return "kWh"
-
-    if lower.endswith("_kw"):
+    if lower.endswith("_kw") or "active_power" in lower:
         return "kW"
-
-    if lower.endswith("_m3"):
+    if "kvar" in lower:
+        return "kVAR"
+    if "kva" in lower:
+        return "kVA"
+    if lower.endswith("_m3") or "water" in lower and "flow" not in lower:
         return "m³"
-
-    if lower.endswith("_kg"):
-        return "kg"
-
+    if "flow" in lower:
+        return "m³/h"
+    if lower.endswith("_kg") or "co2" in lower or "carbon" in lower:
+        return "kgCO2" if ("co2" in lower or "carbon" in lower) else "kg"
     if lower.endswith("_l"):
         return "L"
-
-    if "pct" in lower or "percent" in lower:
+    if "pct" in lower or "percent" in lower or "thd" in lower:
         return "%"
-
-    if "co2" in lower or "carbon" in lower:
-        return "kgCO2"
-
+    if "frequency" in lower:
+        return "Hz"
+    if "voltage" in lower:
+        return "V"
+    if "current" in lower:
+        return "A"
+    if "production" in lower or "output" in lower:
+        return "unit"
     return ""
+
+
+def extract_topic_topology(topic: str) -> dict:
+    seg = [s for s in str(topic or "").split("/") if s]
+    # DataPlatform finale : Plant / Line / Area / Equipment / Measurement
+    return {
+        "plant": clean_name(seg[0]) if len(seg) > 0 else "",
+        "production_line": clean_name(seg[1]) if len(seg) > 1 else "",
+        "area": clean_name(seg[2]) if len(seg) > 2 else "",
+        "equipment": clean_name(seg[3]) if len(seg) > 3 else "",
+        "measurement_name": clean_name(seg[4]) if len(seg) > 4 else "",
+    }
 
 
 def extract_topology(topic: str, raw: dict) -> dict:
     meter_id = get_meter_id(topic, raw)
+    topic_topology = extract_topic_topology(topic)
+    measurement_name = topic_topology.get("measurement_name") or raw.get("measurement_name")
 
-    return {
-        "meter_id": meter_id,
+    # Agrégats de ligne (Total_water_consumption…) : le topic n'a pas de
+    # segment équipement — on utilise le nom de l'agrégat comme équipement.
+    aggregate_equipment = None
+    if _normalize_area(topic_topology.get("area") or "") == "Line Total":
+        aggregate_equipment = _clean_display(topic_topology.get("area"))
 
-        "tags": extract_tags(raw, meter_id),
-
-        "plant": raw.get("plant")
-        or raw.get("plant_name")
-        or raw.get("site")
-        or get_plant(meter_id),
-
-        "unit_name": raw.get("unit_name")
-        or raw.get("unit")
-        or raw.get("workshop")
-        or get_unit_name(meter_id),
-
-        "production_line": raw.get("production_line")
-        or raw.get("line")
-        or raw.get("line_name")
-        or get_line(meter_id),
-
-        "area": raw.get("area")
-        or raw.get("zone")
-        or raw.get("area_name")
-        or get_area(meter_id),
-
-        "equipment": raw.get("equipment")
+    equipment = (
+        raw.get("equipment")
         or raw.get("equipment_name")
         or raw.get("device_name")
-        or f"Power Meter {meter_id}",
+        or topic_topology.get("equipment")
+        or aggregate_equipment
+        or measurement_name
+        or f"Power Meter {meter_id}"
+    )
+
+    # Normalisation ANTI-DOUBLONS : quelle que soit la source (topic ou
+    # payload, MAJUSCULES ou pas), la hiérarchie est stockée sous une forme
+    # canonique unique → plus de zones/lignes en double dans les filtres.
+    return {
+        "meter_id": meter_id,
+        "tags": extract_tags(raw, meter_id, topic_topology=topic_topology, equipment=equipment),
+        "plant": _clean_display(
+            raw.get("plant") or raw.get("plant_name") or raw.get("site")
+            or topic_topology.get("plant") or get_plant(meter_id)
+        ),
+        "unit_name": raw.get("unit_name") or raw.get("unit") or raw.get("workshop") or get_unit_name(meter_id),
+        "production_line": _normalize_line_name(
+            raw.get("production_line") or raw.get("line") or raw.get("line_name")
+            or topic_topology.get("production_line") or get_line(meter_id)
+        ),
+        "area": _normalize_area(
+            raw.get("area") or raw.get("zone") or raw.get("area_name")
+            or topic_topology.get("area") or get_area(meter_id)
+        ),
+        "equipment": _clean_display(equipment),
     }
+
+
+# ── ALARMES LOCALES DE SEUILS ─────────────────────────────────────────────────
+# La nouvelle DataPlatform ne déploie pas de job Flink d'alertes : le backend
+# applique lui-même les seuils configurés dans la page Alarm Thresholds
+# (thresholds.json) sur chaque mesure reçue — avec déduplication par équipement.
+
+_THRESHOLDS_CACHE = {"data": None, "ts": 0.0}
+
+
+def get_cached_thresholds() -> dict:
+    """Relit thresholds.json au plus toutes les 10 s (pas à chaque message)."""
+    now = time.time()
+    if _THRESHOLDS_CACHE["data"] is None or now - _THRESHOLDS_CACHE["ts"] > 10:
+        try:
+            from app.routes.thresholds import load_thresholds
+            _THRESHOLDS_CACHE["data"] = load_thresholds()
+        except Exception:
+            _THRESHOLDS_CACHE["data"] = {}
+        _THRESHOLDS_CACHE["ts"] = now
+    return _THRESHOLDS_CACHE["data"] or {}
+
+
+def raise_local_alarm(meta: dict, alarm_type: str, severity: str,
+                      message: str, measured, limit) -> None:
+    """Crée (ou rafraîchit) une alarme locale, dédupliquée par équipement."""
+    db = SessionLocal()
+    try:
+        existing = find_active_alarm(
+            db, alarm_type, meta["production_line"], meta["equipment"]
+        )
+        timestamp = meta.get("timestamp") or datetime.utcnow()
+
+        if existing:
+            existing.measured_value = measured
+            existing.created_at = timestamp
+            db.commit()
+            return
+
+        db.add(
+            Alarm(
+                plant=meta["plant"],
+                unit_name=meta["unit_name"],
+                production_line=meta["production_line"],
+                area=meta["area"],
+                equipment=meta["equipment"],
+                energy_name="Power Quality",
+                alarm_type=alarm_type,
+                severity=severity,
+                message=message,
+                measured_value=measured,
+                limit_value=limit,
+                status="active",
+                created_at=timestamp,
+            )
+        )
+        db.commit()
+
+        print(f"🚨 Threshold alarm: [{severity.upper()}] {alarm_type} | {meta['equipment']} | {measured}")
+
+        broadcast_ws(
+            {
+                "type": "flink_alarm",
+                "action": "created",
+                "alarm_type": alarm_type,
+                "severity": severity,
+                "device": meta["equipment"],
+                "production_line": meta["production_line"],
+                "value": measured,
+                "message": message,
+            }
+        )
+    except Exception as error:
+        db.rollback()
+        print(f"❌ raise_local_alarm error: {error}")
+    finally:
+        db.close()
+
+
+def check_threshold_alarms(meta: dict, active_kw) -> None:
+    """
+    Applique les seuils configurés (Alarm Thresholds) à la mesure reçue.
+    Un équipement hors tension (voltage < 50 V = arrêté) n'est PAS une
+    anomalie électrique : ses seuils ne sont vérifiés que s'il est alimenté.
+    """
+    th = get_cached_thresholds()
+    if not th:
+        return
+
+    voltage = meta.get("voltage")
+    frequency = meta.get("frequency")
+    power_factor = meta.get("power_factor")
+    thd = meta.get("thd")
+    equipment = meta.get("equipment", "?")
+
+    energized = voltage is not None and voltage >= 50
+
+    if energized:
+        if voltage < th.get("voltage_min", 0):
+            raise_local_alarm(meta, "UNDERVOLTAGE", "high",
+                              f"Voltage {voltage:.1f} V below minimum on {equipment}",
+                              voltage, th.get("voltage_min"))
+        elif voltage > th.get("voltage_max", 10**9):
+            raise_local_alarm(meta, "OVERVOLTAGE", "high",
+                              f"Voltage {voltage:.1f} V above maximum on {equipment}",
+                              voltage, th.get("voltage_max"))
+
+        if frequency is not None and frequency > 10:
+            if frequency < th.get("frequency_min", 0):
+                raise_local_alarm(meta, "UNDERFREQUENCY", "medium",
+                                  f"Frequency {frequency:.2f} Hz below minimum on {equipment}",
+                                  frequency, th.get("frequency_min"))
+            elif frequency > th.get("frequency_max", 10**9):
+                raise_local_alarm(meta, "OVERFREQUENCY", "medium",
+                                  f"Frequency {frequency:.2f} Hz above maximum on {equipment}",
+                                  frequency, th.get("frequency_max"))
+
+        if power_factor is not None and 0 < power_factor < th.get("power_factor_min", 0):
+            raise_local_alarm(meta, "LOW_POWER_FACTOR", "medium",
+                              f"Power factor {power_factor:.2f} below minimum on {equipment}",
+                              power_factor, th.get("power_factor_min"))
+
+        if thd is not None and thd > th.get("thd_max", 10**9):
+            raise_local_alarm(meta, "HIGH_THD", "medium",
+                              f"THD {thd:.1f}% above maximum on {equipment}",
+                              thd, th.get("thd_max"))
+
+    if (
+        active_kw is not None
+        and th.get("high_consumption_kw")
+        and active_kw > th["high_consumption_kw"]
+    ):
+        raise_local_alarm(meta, "HIGH_CONSUMPTION", "high",
+                          f"Power {active_kw:.1f} kW above threshold on {equipment}",
+                          active_kw, th.get("high_consumption_kw"))
 
 
 def parse_dataplatform_payload(topic: str, raw: dict) -> list[dict]:
     topology = extract_topology(topic, raw)
-
-    # Adapter : payload imbriqué OU plat, puis clés normalisées (casse,
-    # alias, triphasé) — voir normalize_measurements / extract_measurements.
     measurements = normalize_measurements(extract_measurements(raw))
-
     if not measurements:
         return []
 
@@ -459,6 +754,10 @@ def parse_dataplatform_payload(topic: str, raw: dict) -> list[dict]:
     power_factor = safe_float(measurements.get("power_factor"))
     thd_voltage = safe_float(measurements.get("thd_voltage_pct"))
     active_kwh = safe_float(measurements.get("active_energy_kWh"))
+    active_kw_direct = safe_float(measurements.get("active_power_kW"))
+    co2_direct = safe_float(measurements.get("co2_kg"))
+    sec_direct = safe_float(measurements.get("sec_kWh_per_unit"))
+    production_qty = safe_float(measurements.get("production_quantity"))
 
     meta = {
         "plant": topology["plant"],
@@ -477,44 +776,53 @@ def parse_dataplatform_payload(topic: str, raw: dict) -> list[dict]:
 
     records = []
 
-    if voltage is not None and current is not None and power_factor is not None:
-        kw = round(voltage * current * power_factor / 1000, 3)
-
-        records.append(
-            {
-                **meta,
-                "energy_name": "Electricity",
-                "value": kw,
-                "unit": "kW",
-            }
-        )
+    if active_kw_direct is not None:
+        records.append({**meta, "energy_name": "Electricity", "value": active_kw_direct, "unit": "kW"})
+    elif voltage is not None and current is not None and power_factor is not None:
+        factor = 1.732 if voltage > 300 else 1.0
+        kw = round(factor * voltage * current * power_factor / 1000, 3)
+        records.append({**meta, "energy_name": "Electricity", "value": kw, "unit": "kW"})
 
     if active_kwh is not None:
-        records.append(
-            {
-                **meta,
-                "energy_name": "Electricity-kWh",
-                "value": active_kwh,
-                "unit": "kWh",
-            }
-        )
+        records.append({**meta, "energy_name": "Electricity-kWh", "value": active_kwh, "unit": "kWh"})
+
+    if co2_direct is not None:
+        records.append({**meta, "energy_name": "CO2-Emissions", "value": co2_direct, "unit": "kgCO2"})
+
+    if sec_direct is not None:
+        records.append({**meta, "energy_name": "SEC", "value": sec_direct, "unit": "kWh/unit"})
+    elif active_kwh is not None and production_qty and production_qty > 0:
+        sec = round(active_kwh / production_qty, 4)
+        records.append({**meta, "energy_name": "SEC", "value": sec, "unit": "kWh/unit"})
+
+    used_keys = POWER_QUALITY_KEYS | {
+        "active_energy_kWh", "active_power_kW", "co2_kg",
+        "sec_kWh_per_unit", "production_quantity",
+    }
 
     for key, value in measurements.items():
-        if key in POWER_QUALITY_KEYS:
+        if key in used_keys:
             continue
-
-        if key == "active_energy_kWh":
+        numeric = safe_float(value)
+        if numeric is None:
             continue
+        records.append({
+            **meta,
+            "energy_name": normalize_energy_name(key),
+            "value": numeric,
+            "unit": infer_unit(key),
+        })
 
-        if isinstance(value, (int, float)):
-            records.append(
-                {
-                    **meta,
-                    "energy_name": normalize_energy_name(key),
-                    "value": float(value),
-                    "unit": infer_unit(key),
-                }
-            )
+    # Seuils configurés (page Alarm Thresholds) → alarmes locales
+    # (UNDER/OVERVOLTAGE, UNDER/OVERFREQUENCY, LOW_POWER_FACTOR, HIGH_THD,
+    #  HIGH_CONSUMPTION), dédupliquées par équipement.
+    active_kw = active_kw_direct
+    if active_kw is None:
+        for r in records:
+            if r["unit"] == "kW":
+                active_kw = r["value"]
+                break
+    check_threshold_alarms(meta, active_kw)
 
     return records
 
@@ -821,6 +1129,9 @@ def save_flink_alarm(alarm: dict) -> None:
 
 
 def consume_kafka_alerts():
+    if KafkaConsumer is None:
+        print("⚠️ kafka-python not installed — Flink alerts consumer disabled (MQTT still active)")
+        return
     kafka_broker = os.getenv("KAFKA_BROKER", "kafka:9092")
     alert_topic = os.getenv("KAFKA_ALERT_TOPIC", "ems.alerts")
 

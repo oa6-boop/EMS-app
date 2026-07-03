@@ -49,12 +49,20 @@ export default function EquipmentStatus({
     if (energy.unit === "kWh") {
       equipmentMap[eqName].kwh = energy.value;
     }
+
+    // Breaker Status envoyé par la DataPlatform (1 = fermé/alimenté, 0 = ouvert)
+    if ((energy.name || "").toLowerCase().includes("breaker")) {
+      equipmentMap[eqName].breaker = Number(energy.value);
+    }
   });
 
   const equipments = Object.values(equipmentMap);
 
-  const getStatus = (kw) =>
-    kw == null
+  // Le breaker (DataPlatform) prime : disjoncteur ouvert = équipement hors tension
+  const getStatus = (kw, breaker) =>
+    breaker === 0
+      ? { label: "Breaker Open", cls: "", color: "#e53e3e" }
+      : kw == null
       ? { label: "Unknown", cls: "", color: "#888" }
       : kw > RUNNING_THRESHOLD
       ? { label: "Running", cls: "running", color: "#38a169" }
@@ -134,7 +142,7 @@ export default function EquipmentStatus({
         <div className="equipment-grid">
           {equipments.length > 0 ? (
             equipments.map((eq) => {
-              const status = getStatus(eq.kw);
+              const status = getStatus(eq.kw, eq.breaker);
               const load = getLoad(eq.kw);
 
               return (
@@ -244,7 +252,7 @@ export default function EquipmentStatus({
             <tbody>
               {equipments.length > 0 ? (
                 equipments.map((eq) => {
-                  const status = getStatus(eq.kw);
+                  const status = getStatus(eq.kw, eq.breaker);
                   const load = getLoad(eq.kw);
 
                   return (

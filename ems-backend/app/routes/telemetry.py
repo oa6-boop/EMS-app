@@ -1,18 +1,17 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import desc, distinct
+from sqlalchemy import desc, distinct, func
 from sqlalchemy.orm import Session
 
+from app.core.deps import get_current_active_user
 from app.db import get_db
 from app.models import TelemetryRecord
 from app.schemas import TelemetryOut
 from app.utils import build_dashboard_summary, calculate_cost, calculate_co2, CO2_FACTOR_KG_PER_KWH
 
-router = APIRouter(prefix="/api", tags=["telemetry"])
-
-
-@router.get("/health")
-def health():
-    return {"status": "ok"}
+# Toutes les routes de ce routeur exigent une authentification.
+# (le /api/health public reste defini dans main.py)
+router = APIRouter(prefix="/api", tags=["telemetry"],
+                   dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/telemetry", response_model=list[TelemetryOut])
@@ -34,11 +33,49 @@ def get_structure(db: Session = Depends(get_db)):
     energy_types= [r[0] for r in db.query(distinct(TelemetryRecord.energy_name)).all()      if r[0]]
     areas       = [r[0] for r in db.query(distinct(TelemetryRecord.area)).all()              if r[0]]
     plants      = [r[0] for r in db.query(distinct(TelemetryRecord.plant)).all()             if r[0]]
+    raw_tags    = [r[0] for r in db.query(distinct(TelemetryRecord.tags)).all()              if r[0]]
+    tags = sorted({t.strip() for row in raw_tags for t in str(row).split(",") if t.strip()})
     return {
         "lines": sorted(lines), "equipment": sorted(equipment),
         "energy_types": sorted(energy_types), "areas": sorted(areas),
-        "plants": sorted(plants), "has_data": len(lines) > 0,
+        "plants": sorted(plants), "tags": tags, "has_data": len(lines) > 0,
     }
+
+
+@router.get("/telemetry/equipment-list")
+def get_equipment_list(db: Session = Depends(get_db)):
+    """Liste dynamique des équipements découverts depuis la DataPlatform."""
+    rows = (
+        db.query(
+            TelemetryRecord.plant,
+            TelemetryRecord.production_line,
+            TelemetryRecord.area,
+            TelemetryRecord.equipment,
+            TelemetryRecord.tags,
+            func.max(TelemetryRecord.timestamp).label("last_seen"),
+        )
+        .group_by(
+            TelemetryRecord.plant,
+            TelemetryRecord.production_line,
+            TelemetryRecord.area,
+            TelemetryRecord.equipment,
+            TelemetryRecord.tags,
+        )
+        .order_by(TelemetryRecord.equipment.asc())
+        .all()
+    )
+
+    return [
+        {
+            "plant": r.plant,
+            "production_line": r.production_line,
+            "area": r.area,
+            "equipment": r.equipment,
+            "tags": r.tags or "",
+            "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/telemetry/line/{line_name}")

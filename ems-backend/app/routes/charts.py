@@ -2,13 +2,15 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, distinct
 from sqlalchemy.orm import Session
 
+from app.core.deps import get_current_active_user
 from app.db import get_db
 from app.models import TelemetryRecord
 
 CO2_FACTOR_KG_PER_KWH = 0.718   # ONEE Maroc (corrigé)
 ELEC_RATE_MAD         = 1.40    # tarif électricité
 
-router = APIRouter(prefix="/api/charts", tags=["charts"])
+router = APIRouter(prefix="/api/charts", tags=["charts"],
+                   dependencies=[Depends(get_current_active_user)])
 
 
 def linear_regression(x_list, y_list):

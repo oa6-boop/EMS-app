@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
-import { fetchAggregatedHistory, fetchComparison } from "../api/emsApi";
+import { fetchAggregatedHistory, fetchComparison, fetchStructure } from "../api/emsApi";
+import TagFilter from "../components/TagFilter.jsx";
+import { svgEventPoint, nearestIndex, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
 const toMAD = (mad) => `${Number(mad || 0).toFixed(2)} MAD`;
-const ENERGY_TYPE = "Electricity";
+const DEFAULT_ENERGY_TYPE = "Electricity";
 
 function HistoryChart({ data = [], color = "#4299e1", height = 280 }) {
   const W = 860;
   const H = height;
   const PX = 55;
   const PY = 20;
+  const [hover, setHover] = useState(null);
 
   const values = data.map((d) => Number(d.value || 0));
 
@@ -63,11 +66,28 @@ function HistoryChart({ data = [], color = "#4299e1", height = 280 }) {
     };
   });
 
+  // Étiquette au survol : date/heure + valeur + unité + coût du point
+  const handleMove = (evt) => {
+    const { x } = svgEventPoint(evt, W, H);
+    const i = nearestIndex(x, PX, W - PX - 20, values.length);
+    const d = data[i] || {};
+    const lines = [
+      d.timestamp
+        ? new Date(d.timestamp).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+        : `Point ${i + 1}`,
+      `${Number(values[i]).toFixed(3)} ${d.unit || ""}`.trim(),
+    ];
+    if (d.cost != null && Number(d.cost) > 0) lines.push(`${Number(d.cost).toFixed(2)} MAD`);
+    setHover({ x: toX(i), y: toY(values[i]), lines });
+  };
+
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", height: H }}
       preserveAspectRatio="none"
+      onMouseMove={handleMove}
+      onMouseLeave={() => setHover(null)}
     >
       <defs>
         <linearGradient id="hist-electricity" x1="0" y1="0" x2="0" y2="1">
@@ -115,6 +135,12 @@ function HistoryChart({ data = [], color = "#4299e1", height = 280 }) {
         points={points}
       />
 
+      {values.map((v, i) => (
+        <circle key={`hover-${i}`} cx={toX(i)} cy={toY(v)} r="7" fill="transparent">
+          <title>{`${data[i]?.energy_name || "Value"} — ${Number(v).toFixed(3)} ${data[i]?.unit || ""} · ${data[i]?.timestamp ? new Date(data[i].timestamp).toLocaleString() : ""}`}</title>
+        </circle>
+      ))}
+
       <circle
         cx={toX(values.length - 1)}
         cy={toY(values[values.length - 1])}
@@ -122,7 +148,9 @@ function HistoryChart({ data = [], color = "#4299e1", height = 280 }) {
         fill={color}
         stroke="white"
         strokeWidth="2"
-      />
+      >
+        <title>{`${data[values.length - 1]?.energy_name || "Latest"} — ${Number(values[values.length - 1]).toFixed(3)} ${data[values.length - 1]?.unit || ""}`}</title>
+      </circle>
 
       {xLabels.map((l, i) => (
         <text
@@ -136,14 +164,25 @@ function HistoryChart({ data = [], color = "#4299e1", height = 280 }) {
           {l.label}
         </text>
       ))}
+      {hover && (
+        <SvgHoverTooltip {...hover} W={W} H={H} color={color} guideTop={PY} guideBottom={H - 35} />
+      )}
     </svg>
   );
 }
 
 export default function HistoricalData({
   selectedLineLabel = "Production Line 1",
+  selectedPlant = "all",
+  selectedZone = "all",
+  selectedEquipment = "all",
+  availableTags = [],
+  selectedTag = "",
+  onTagSelect,
 }) {
   const [period, setPeriod] = useState("day");
+  const [energyType, setEnergyType] = useState(DEFAULT_ENERGY_TYPE);
+  const [energyTypes, setEnergyTypes] = useState([DEFAULT_ENERGY_TYPE]);
   const [histData, setHistData] = useState([]);
   const [stats, setStats] = useState(null);
   const [comparison, setComparison] = useState(null);
@@ -159,6 +198,27 @@ export default function HistoricalData({
   ];
 
   useEffect(() => {
+    const loadStructure = async () => {
+      try {
+        const structure = await fetchStructure();
+        const types = structure?.energy_types?.length ? structure.energy_types : [DEFAULT_ENERGY_TYPE];
+        setEnergyTypes(types);
+        if (!types.includes(energyType)) setEnergyType(types.includes(DEFAULT_ENERGY_TYPE) ? DEFAULT_ENERGY_TYPE : types[0]);
+      } catch {
+        setEnergyTypes([DEFAULT_ENERGY_TYPE]);
+      }
+    };
+    loadStructure();
+  }, [energyType]);
+
+  const backendFilters = {
+    plant: selectedPlant !== "all" ? selectedPlant : "",
+    zone: selectedZone !== "all" ? selectedZone : "",
+    equipment: selectedEquipment !== "all" ? selectedEquipment : "",
+    tag: selectedTag || "",
+  };
+
+  useEffect(() => {
     const load = async () => {
       setLoading(true);
       setError("");
@@ -167,7 +227,8 @@ export default function HistoricalData({
         const data = await fetchAggregatedHistory(
           selectedLineLabel,
           period,
-          ENERGY_TYPE
+          energyType,
+          backendFilters
         );
 
         setHistData(data.data || []);
@@ -182,12 +243,12 @@ export default function HistoricalData({
     };
 
     load();
-  }, [period, selectedLineLabel]);
+  }, [period, selectedLineLabel, energyType, selectedPlant, selectedZone, selectedEquipment, selectedTag]);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const data = await fetchComparison(selectedLineLabel, ENERGY_TYPE);
+        const data = await fetchComparison(selectedLineLabel, energyType, backendFilters);
         setComparison(data);
       } catch {
         setComparison(null);
@@ -195,7 +256,7 @@ export default function HistoricalData({
     };
 
     load();
-  }, [selectedLineLabel]);
+  }, [selectedLineLabel, energyType, selectedPlant, selectedZone, selectedEquipment, selectedTag]);
 
   const variationColor =
     comparison?.variation_pct > 0
@@ -216,9 +277,16 @@ export default function HistoricalData({
       <div className="section-title-wrap">
         <h1>Historical Data</h1>
         <p>
-          Electricity consumption trends — {selectedLineLabel} · Costs in MAD
+          {energyType} trends — {selectedLineLabel} · Costs in MAD
+          {selectedTag ? ` — #${selectedTag}` : ""}
         </p>
       </div>
+
+      <TagFilter
+        availableTags={availableTags}
+        selectedTag={selectedTag}
+        onTagSelect={onTagSelect}
+      />
 
       {error && (
         <div className="alarm-item" style={{ marginBottom: "1rem" }}>
@@ -238,7 +306,7 @@ export default function HistoricalData({
           PERIOD
         </p>
 
-        <div className="switch-tags">
+        <div className="switch-tags" style={{ marginBottom: "0.75rem" }}>
           {PERIOD_OPTIONS.map((p) => (
             <button
               key={p.value}
@@ -250,6 +318,22 @@ export default function HistoricalData({
             </button>
           ))}
         </div>
+
+        <p style={{ fontSize: "0.82rem", color: "#64748b", fontWeight: 600, margin: "0.75rem 0 0.5rem" }}>
+          ENERGY / KPI
+        </p>
+        <div className="switch-tags">
+          {energyTypes.map((type) => (
+            <button
+              key={type}
+              type="button"
+              className={energyType === type ? "active" : ""}
+              onClick={() => setEnergyType(type)}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
       </section>
 
       {stats && Object.keys(stats).length > 0 && (
@@ -257,19 +341,19 @@ export default function HistoricalData({
           <div className="carbon-kpis">
             <div className="carbon-card">
               <h4>Average</h4>
-              <strong>{stats.avg} kW</strong>
+              <strong>{stats.avg} {histData[0]?.unit || ""}</strong>
               <span>Average active power</span>
             </div>
 
             <div className="carbon-card">
               <h4>Minimum</h4>
-              <strong>{stats.min} kW</strong>
+              <strong>{stats.min} {histData[0]?.unit || ""}</strong>
               <span>Lowest in period</span>
             </div>
 
             <div className="carbon-card">
               <h4>Maximum</h4>
-              <strong style={{ color: "#e53e3e" }}>{stats.max} kW</strong>
+              <strong style={{ color: "#e53e3e" }}>{stats.max} {histData[0]?.unit || ""}</strong>
               <span>Peak in period</span>
             </div>
 
@@ -278,7 +362,7 @@ export default function HistoricalData({
               <strong style={{ color: "#d69e2e" }}>
                 {toMAD(stats.total_cost)}
               </strong>
-              <span>Based on active power records</span>
+              <span>Based on selected KPI records</span>
             </div>
 
             <div className="carbon-card">
@@ -295,7 +379,7 @@ export default function HistoricalData({
           <div className="panel-head">
             <div>
               <h2>
-                Electricity —{" "}
+                {energyType} —{" "}
                 {PERIOD_OPTIONS.find((p) => p.value === period)?.label}
               </h2>
               <p>
@@ -329,7 +413,7 @@ export default function HistoricalData({
 
           {!loading && histData.length === 0 && !error && (
             <div className="info-box">
-              ℹ️ No electricity data yet on{" "}
+              ℹ️ No {energyType} data yet on{" "}
               <strong>{selectedLineLabel}</strong>. Data accumulates
               automatically from the DataPlatform.
             </div>
@@ -441,7 +525,7 @@ export default function HistoricalData({
         <section className="section-block">
           <div className="section-title-wrap">
             <h2>Detailed Records</h2>
-            <p>Last 20 electricity records — {selectedLineLabel}</p>
+            <p>Last 20 {energyType} records — {selectedLineLabel}</p>
           </div>
 
           <div className="table-card">
@@ -464,7 +548,7 @@ export default function HistoricalData({
                         {new Date(row.timestamp).toLocaleString()}
                       </td>
                       <td>
-                        <strong>{Number(row.value || 0).toFixed(2)} kW</strong>
+                        <strong>{Number(row.value || 0).toFixed(2)} {row.unit || ""}</strong>
                       </td>
                       <td style={{ color: "#d69e2e", fontWeight: 600 }}>
                         {toMAD(row.cost)}

@@ -18,6 +18,7 @@ router = APIRouter(prefix="/api/thresholds", tags=["thresholds"])
 THRESHOLDS_FILE = "thresholds.json"
 
 DEFAULT_THRESHOLDS = {
+    "high_consumption_kw": 500.0,
     "voltage_min": 210.0,
     "voltage_max": 250.0,
     "frequency_min": 49.5,

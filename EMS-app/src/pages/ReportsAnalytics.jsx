@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import { fetchConversations, shareReportToConversation } from "../api/chatApi";
+import { fetchConversations, uploadChatFile } from "../api/chatApi";
+import jsPDF from "jspdf";
+import { aggregateByEnergy } from "../utils/energyAggregation.js";
+import html2canvas from "html2canvas";
+import { svgEventPoint, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
 const toMAD = (mad) => `${Number(mad || 0).toFixed(2)} MAD`;
 
@@ -23,14 +27,35 @@ function getHighestDemand(energies) {
 
 function PrintableBarChart({ energies = [] }) {
   const filtered = energies;
+  const [hover, setHover] = useState(null);
 
   if (!filtered.length) return null;
 
   const W = 500;
   const H = 200;
+  const shown = filtered.slice(0, 5);
   const barW = Math.min(60, (W - 40) / filtered.length - 8);
   const maxVal = Math.max(...filtered.map((e) => e.value), 1);
   const chartH = H - 40;
+  const slotW = (W - 40) / Math.min(filtered.length, 5);
+
+  // Étiquette au survol d'une barre : énergie + valeur + équipement
+  const handleMove = (evt) => {
+    const { x } = svgEventPoint(evt, W, H);
+    const i = Math.max(0, Math.min(shown.length - 1, Math.floor((x - 30) / slotW)));
+    const energy = shown[i];
+    if (!energy) return;
+    const barH = Math.max(4, (energy.value / maxVal) * chartH);
+    setHover({
+      x: 30 + i * slotW + barW / 2,
+      y: 10 + chartH - barH,
+      lines: [
+        energy.name,
+        `${Number(energy.value || 0).toFixed(3)} ${energy.unit || ""}`.trim(),
+        energy.equipment || "Equipment",
+      ],
+    });
+  };
 
   return (
     <svg
@@ -38,6 +63,8 @@ function PrintableBarChart({ energies = [] }) {
       width={W}
       height={H}
       style={{ display: "block", width: "100%", maxWidth: W }}
+      onMouseMove={handleMove}
+      onMouseLeave={() => setHover(null)}
     >
       {[0, 1, 2, 3, 4].map((i) => (
         <line
@@ -65,6 +92,7 @@ function PrintableBarChart({ energies = [] }) {
               height={barH}
               fill={BAR_COLORS[i % BAR_COLORS.length]}
               rx="3"
+              opacity={hover && hover.lines[0] === energy.name ? 1 : 0.9}
             />
 
             <text
@@ -89,6 +117,9 @@ function PrintableBarChart({ energies = [] }) {
           </g>
         );
       })}
+      {hover && (
+        <SvgHoverTooltip {...hover} W={W} H={H} color="#7c3aed" guideTop={10} guideBottom={10 + chartH} />
+      )}
     </svg>
   );
 }
@@ -104,11 +135,19 @@ export default function ReportsAnalytics({
 }) {
   const highestDemand = getHighestDemand(energies);
 
+  // UNE entrée par énergie (agrégée sur les équipements) — pour le graphe de
+  // distribution et sa légende, sinon on affiche 7 barres "Electricity".
+  // Triée par valeur décroissante : les énergies actives en premier.
+  const energySummary = aggregateByEnergy(energies).sort(
+    (a, b) => Number(b.value || 0) - Number(a.value || 0)
+  );
+
   const [showShareModal, setShowShareModal] = useState(false);
   const [conversations, setConversations] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState("");
   const [shareError, setShareError] = useState("");
   const [shareSuccess, setShareSuccess] = useState("");
+  const [sharing, setSharing] = useState(false);
 
   const cumulativeCostMAD = Number(cumulativeKwh || 0) * 1.4;
 
@@ -212,12 +251,64 @@ export default function ReportsAnalytics({
     if (conv.type === "group") return conv.name || `Group #${conv.id}`;
 
     if (conv.participants?.length) {
-      return conv.participants
-        .map((p) => `${p.firstName} ${p.lastName}`)
-        .join(", ");
+      const names = conv.participants
+        .map((p) =>
+          `${p.firstName || ""} ${p.lastName || ""}`.trim() || p.email || ""
+        )
+        .filter(Boolean);
+      if (names.length) return names.join(", ");
     }
 
     return `Conversation #${conv.id}`;
+  };
+
+  // Genere un vrai PDF visuel de la page Reports & Analytics.
+  const generateReportPdf = async () => {
+    const element = document.getElementById("reports-export-root");
+    if (!element) throw new Error("Report content not found");
+
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      windowWidth: element.scrollWidth,
+      windowHeight: element.scrollHeight,
+      // On exclut tout ce qui ne doit pas apparaitre dans le PDF :
+      // la modale de partage, les boutons d'action, le chatbot, etc.
+      ignoreElements: (el) =>
+        el.classList?.contains("forgot-modal-overlay") ||
+        el.classList?.contains("no-print") ||
+        el.classList?.contains("chatbot-fab"),
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+
+    const pdf = new jsPDF("p", "mm", "a4");
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    let heightLeft = imgHeight;
+    let position = 0;
+
+    pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+    heightLeft -= pageHeight;
+
+    while (heightLeft > 0) {
+      position -= pageHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+    }
+
+    const blob = pdf.output("blob");
+    const fileName = `EMS_Report_${selectedLineLabel}_${new Date()
+      .toISOString()
+      .slice(0, 10)}.pdf`;
+
+    return new File([blob], fileName, { type: "application/pdf" });
   };
 
   const handleShare = async () => {
@@ -226,29 +317,38 @@ export default function ReportsAnalytics({
       return;
     }
 
+    const conversationId = Number(selectedConversationId);
+
     try {
+      setShareError("");
+      setSharing(true);
+
       const token = localStorage.getItem("token");
 
-      await shareReportToConversation(
-        {
-          conversation_id: Number(selectedConversationId),
-          file_name: `Report-${selectedLineLabel}.pdf`,
-          file_url: "#generated-report",
-        },
-        token
+      // 1) On ferme d'abord la modale pour qu'elle n'apparaisse PAS dans le PDF,
+      //    puis on attend deux frames que React redessine la page proprement.
+      setShowShareModal(false);
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
       );
 
-      setShowShareModal(false);
+      // 2) Generer le PDF de la page (sans la modale ni les boutons)
+      const pdfFile = await generateReportPdf();
+
+      // 3) L'envoyer dans la conversation choisie (endpoint upload existant)
+      await uploadChatFile(conversationId, pdfFile, token);
+
       setSelectedConversationId("");
-      setShareError("");
-      setShareSuccess("Report shared successfully.");
+      setShareSuccess("Report (PDF) shared successfully.");
 
       setTimeout(() => setShareSuccess(""), 3000);
     } catch (e) {
-      setShareError(e.message || "Failed to share");
+      setShareError(e.message || "Failed to generate or share the PDF");
+      setShowShareModal(true);
+    } finally {
+      setSharing(false);
     }
   };
-
   const totalKw = energies
     .filter((e) => e.unit === "kW")
     .reduce((s, e) => s + e.value, 0);
@@ -600,7 +700,7 @@ export default function ReportsAnalytics({
             </div>
           </div>
 
-          <PrintableBarChart energies={energies.slice(0, 5)} />
+          <PrintableBarChart energies={energySummary.slice(0, 5)} />
 
           <div
             style={{
@@ -610,7 +710,7 @@ export default function ReportsAnalytics({
               marginTop: "0.5rem",
             }}
           >
-            {energies.slice(0, 5).map((e, i) => (
+            {energySummary.slice(0, 5).map((e, i) => (
               <span
                 key={e.id || i}
                 style={{
@@ -784,8 +884,13 @@ export default function ReportsAnalytics({
             )}
 
             <div className="forgot-modal-actions">
-              <button type="button" className="login-btn" onClick={handleShare}>
-                Share
+              <button
+                type="button"
+                className="login-btn"
+                onClick={handleShare}
+                disabled={sharing}
+              >
+                {sharing ? "Generating PDF…" : "Share"}
               </button>
 
               <button

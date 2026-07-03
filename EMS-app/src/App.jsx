@@ -47,6 +47,8 @@ import {
 
 import { fetchLatestMessageNotifications } from "./api/chatApi";
 import { logAudit } from "./api/auditApi";
+import { fetchIndustryAlarms } from "./api/industryApi";
+import { fetchMaintenanceRecords } from "./api/maintenanceApi";
 
 const PAGES_BY_ROLE = {
   admin: [
@@ -73,7 +75,6 @@ const PAGES_BY_ROLE = {
   ],
   management: [
     "dashboard",
-    "industry",
     "carbon",
     "forecasting",
     "reports",
@@ -83,6 +84,7 @@ const PAGES_BY_ROLE = {
     "profile",
   ],
   maintenance: [
+    "industry",
     "realtime",
     "equipment",
     "power",
@@ -108,7 +110,7 @@ const PAGES_BY_ROLE = {
 const DEFAULT_PAGE = {
   admin: "dashboard",
   management: "dashboard",
-  maintenance: "realtime",
+  maintenance: "industry",
   operator: "dashboard",
 };
 
@@ -250,48 +252,33 @@ function convertEnergies(lineData = [], lineLabel = "") {
 }
 
 function buildElectricalData(energies) {
-  const electricEnergies = energies.filter((energy) => {
-    const name = energy.name.toLowerCase();
-    return name.includes("electric") || name.includes("électric");
+  const withElectricalMetadata = energies.filter((energy) => {
+    const name = (energy.name || "").toLowerCase();
+    return (
+      energy.rawData?.voltage != null ||
+      energy.rawData?.frequency != null ||
+      energy.rawData?.power_factor != null ||
+      energy.rawData?.thd != null ||
+      name.includes("electric") ||
+      name.includes("électric")
+    );
   });
 
-  if (!electricEnergies.length) {
-    return {
-      tension: 230,
-      frequence: 50,
-      facteurPuissance: 0.9,
-      thd: 3.2,
-    };
-  }
+  const avg = (arr) => {
+    const vals = arr.map(Number).filter((v) => Number.isFinite(v));
+    return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+  };
 
-  const avg = (arr, def) =>
-    arr.length ? arr.reduce((s, v) => s + Number(v || 0), 0) / arr.length : def;
+  const tension = avg(withElectricalMetadata.map((e) => e.rawData?.voltage));
+  const frequence = avg(withElectricalMetadata.map((e) => e.rawData?.frequency));
+  const facteurPuissance = avg(withElectricalMetadata.map((e) => e.rawData?.power_factor));
+  const thd = avg(withElectricalMetadata.map((e) => e.rawData?.thd));
 
   return {
-    tension: parseFloat(
-      avg(
-        electricEnergies.map((e) => e.rawData?.voltage).filter((v) => v != null),
-        230
-      ).toFixed(1)
-    ),
-    frequence: parseFloat(
-      avg(
-        electricEnergies.map((e) => e.rawData?.frequency).filter((v) => v != null),
-        50
-      ).toFixed(2)
-    ),
-    facteurPuissance: parseFloat(
-      avg(
-        electricEnergies.map((e) => e.rawData?.power_factor).filter((v) => v != null),
-        0.9
-      ).toFixed(3)
-    ),
-    thd: parseFloat(
-      avg(
-        electricEnergies.map((e) => e.rawData?.thd).filter((v) => v != null),
-        3.2
-      ).toFixed(2)
-    ),
+    tension: tension != null ? Number(tension.toFixed(1)) : null,
+    frequence: frequence != null ? Number(frequence.toFixed(2)) : null,
+    facteurPuissance: facteurPuissance != null ? Number(facteurPuissance.toFixed(3)) : null,
+    thd: thd != null ? Number(thd.toFixed(2)) : null,
   };
 }
 
@@ -360,11 +347,18 @@ function App() {
   const [urgentCount, setUrgentCount] = useState(0);
   const [messageNotifCount, setMessageNotifCount] = useState(0);
 
+  // Notifications : alarmes actives (admin/technicien/operator) et
+  // interventions de maintenance assignées à l'utilisateur connecté.
+  const [alarmCount, setAlarmCount] = useState(0);
+  const [myInterventionCount, setMyInterventionCount] = useState(0);
+
   const [powerQualityHistory, setPowerQualityHistory] = useState([]);
   const [carbonHistory, setCarbonHistory] = useState([]);
 
   const lastSeenRef = useRef(new Set());
   const lastUrgentRef = useRef(0);
+  const lastAlarmRef = useRef(-1);
+  const lastInterventionRef = useRef(-1);
   const initializedRef = useRef(false);
 
   const setActivePage = useCallback((page) => {
@@ -567,6 +561,64 @@ function App() {
     restore();
   }, []);
 
+  // ── Notification ALARMES : badge rouge (nb d'alarmes actives) + toast à
+  //    chaque nouvelle alarme — pour admin, technicien et operator.
+  useEffect(() => {
+    if (!isLoggedIn || !user) return;
+    if (!["admin", "maintenance", "operator"].includes(user.role)) return;
+
+    const poll = async () => {
+      try {
+        const alarms = await fetchIndustryAlarms();
+        const active = (alarms || []).filter((a) => a.status === "active").length;
+
+        if (lastAlarmRef.current >= 0 && active > lastAlarmRef.current) {
+          setToastMessage(`🚨 New alarm — ${active} active alarm${active > 1 ? "s" : ""}`);
+        }
+        lastAlarmRef.current = active;
+        setAlarmCount(active);
+      } catch {
+        // backend indisponible : badge inchangé
+      }
+    };
+
+    poll();
+    const intervalId = setInterval(poll, 10000);
+    return () => clearInterval(intervalId);
+  }, [isLoggedIn, user?.role]);
+
+  // ── Notification INTERVENTIONS : badge + toast pour le technicien quand
+  //    une intervention lui est affectée (admin ou technicien l'a assignée).
+  useEffect(() => {
+    if (!isLoggedIn || !user) return;
+
+    const myName = `${user.firstName || ""} ${user.lastName || ""}`.trim().toLowerCase();
+    if (!myName) return;
+
+    const poll = async () => {
+      try {
+        const records = await fetchMaintenanceRecords();
+        const mine = (records || []).filter(
+          (r) =>
+            String(r.technician || "").trim().toLowerCase() === myName &&
+            !["Completed", "Cancelled"].includes(r.status)
+        ).length;
+
+        if (lastInterventionRef.current >= 0 && mine > lastInterventionRef.current) {
+          setToastMessage(`🔧 New maintenance intervention assigned to you (${mine} open)`);
+        }
+        lastInterventionRef.current = mine;
+        setMyInterventionCount(mine);
+      } catch {
+        // backend indisponible : badge inchangé
+      }
+    };
+
+    poll();
+    const intervalId = setInterval(poll, 10000);
+    return () => clearInterval(intervalId);
+  }, [isLoggedIn, user?.id]);
+
   useEffect(() => {
     if (!isLoggedIn || !user) return;
 
@@ -664,6 +716,10 @@ function App() {
   // Tags disponibles dans le perimetre Plant/Line/Zone courant
   // (avant filtre tag/equipment, pour que les chips restent visibles)
   const availableTags = useMemo(() => {
+    const essential = new Set([
+      "pump", "motor", "fan", "conveyor", "crusher", "compressor",
+      "blower", "valve", "tank", "mill", "screen", "feeder", "water", "electric"
+    ]);
     const set = new Set();
 
     allEnergies.forEach((e) => {
@@ -671,7 +727,9 @@ function App() {
       if (selection.line && !isSameValue(e.line, selection.line)) return;
       if (selection.zone && !isSameValue(e.zone, selection.zone)) return;
 
-      (e.tags || []).forEach((t) => set.add(t));
+      (e.tags || []).forEach((t) => {
+        if (essential.has(t)) set.add(t);
+      });
     });
 
     return [...set].sort();
@@ -698,9 +756,28 @@ function App() {
     return scopedEnergies.filter((e) => !isCumulativeEnergy(e));
   }, [scopedEnergies]);
 
+  // Mesures TECHNIQUES (qualité/état) — exclues du filtre "Energy Types" :
+  // ce ne sont pas des énergies consommées. Elles restent visibles dans les
+  // pages dédiées (Power Quality, Equipment Status, Real-Time).
+  const TECHNICAL_MEASUREMENTS = useMemo(() => new Set([
+    "breaker status", "apparent power", "reactive power", "thd current",
+    "temperature", "pressure", "speed", "air flow", "flow rate",
+    "steam pressure", "steam temperature", "fuel pressure", "fuel temperature",
+    "steam flow", "fuel flow", "status",
+  ]), []);
+
+  // Liste STABLE (triée + même référence si contenu identique) : le panneau
+  // de filtre ne "saute" plus pendant le polling temps réel.
+  const stableNamesRef = useRef([]);
   const availableNames = useMemo(() => {
-    return [...new Set(consumptionEnergies.map((e) => e.name))];
-  }, [consumptionEnergies]);
+    const next = [...new Set(consumptionEnergies.map((e) => e.name))]
+      .filter((n) => !TECHNICAL_MEASUREMENTS.has(String(n || "").toLowerCase()))
+      .sort((a, b) => String(a).localeCompare(String(b)));
+    if (JSON.stringify(next) !== JSON.stringify(stableNamesRef.current)) {
+      stableNamesRef.current = next;
+    }
+    return stableNamesRef.current;
+  }, [consumptionEnergies, TECHNICAL_MEASUREMENTS]);
 
   const visibleEnergies = useMemo(() => {
     if (!selectedEnergyNames.length) return consumptionEnergies;
@@ -890,6 +967,7 @@ function App() {
     avgVoltage: displayedAvgVoltage,
     avgPowerFactor: displayedAvgPowerFactor,
     backendSummary,
+    userRole: user?.role || "",
   };
 
   const renderPage = () => {
@@ -1112,6 +1190,8 @@ function App() {
         currentUser={user}
         urgentCount={urgentCount}
         messageNotifCount={messageNotifCount}
+        alarmCount={alarmCount}
+        interventionCount={myInterventionCount}
       />
 
       <div className="main">

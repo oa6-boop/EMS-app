@@ -2,7 +2,10 @@ const hostname     = window.location.hostname;
 const API_BASE_URL = `http://${hostname}:8000`;
 
 async function apiFetch(url) {
-  const response = await fetch(url);
+  const token = localStorage.getItem("token") || "";
+  const response = await fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
   if (!response.ok) {
     const err = await response.text().catch(() => "Unknown error");
     throw new Error(`API ${response.status}: ${err}`);
@@ -72,4 +75,8 @@ export async function fetchComparison(lineName, energyName = "Electricity") {
 
 export async function fetchAllLinesSummary(period = "day") {
   return apiFetch(`${API_BASE_URL}/api/history/summary?period=${period}`);
+}
+
+export async function fetchEquipmentList() {
+  return apiFetch(`${API_BASE_URL}/api/telemetry/equipment-list`);
 }

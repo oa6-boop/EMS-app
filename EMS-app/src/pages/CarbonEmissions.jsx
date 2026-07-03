@@ -1,9 +1,11 @@
-
+import { useState } from "react";
+import { svgEventPoint, nearestIndex, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
 const CO2_FACTOR = 0.718; // kgCO₂/kWh — ONEE Maroc
 
-function CarbonLineChart({ data = [], labels = [] }) {
+function CarbonLineChart({ data = [], labels = [], timestamps = [] }) {
   const W = 760, H = 240, P = 36;
+  const [hover, setHover] = useState(null);
   const hasData = data.length >= 2;
   const vals    = hasData ? data : [0, 0];
   const minV = Math.min(...vals), maxV = Math.max(...vals), rng = maxV - minV || 1;
@@ -11,13 +13,29 @@ function CarbonLineChart({ data = [], labels = [] }) {
   const toY = (v)    => H - P - ((v - minV) / rng) * (H - P * 2);
   const points = vals.map((v, i) => `${toX(i, vals.length).toFixed(1)},${toY(v).toFixed(1)}`).join(" ");
 
+  // Étiquette au survol : suit le curseur et affiche heure + valeur du point
+  const handleMove = (evt) => {
+    if (!hasData) return;
+    const { x } = svgEventPoint(evt, W, H);
+    const i = nearestIndex(x, P, W - P * 2, vals.length);
+    const when = timestamps[i]
+      ? new Date(timestamps[i]).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : labels?.[i] || `Point ${i + 1}`;
+    setHover({
+      x: toX(i, vals.length),
+      y: toY(vals[i]),
+      lines: [when, `${Number(vals[i]).toFixed(3)} kgCO₂`],
+    });
+  };
+
   return (
     <div className="svg-chart-card chart-green">
       <div className="svg-chart-head">
         <h4>CO₂ Emissions Trend (kgCO₂)</h4>
         <span>{hasData ? `Latest: ${vals[vals.length - 1].toFixed(3)} kg` : "Waiting for CO₂ data..."}</span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="svg-line-chart" preserveAspectRatio="none">
+      <svg viewBox={`0 0 ${W} ${H}`} className="svg-line-chart" preserveAspectRatio="none"
+        onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
         {[0,1,2,3,4].map(r => (
           <line key={r} x1={P} y1={P + r * ((H - P*2) / 4)} x2={W-P} y2={P + r * ((H - P*2) / 4)} className="svg-grid-line" />
         ))}
@@ -29,6 +47,9 @@ function CarbonLineChart({ data = [], labels = [] }) {
           const idx = Math.min(i * Math.max(1, Math.floor(vals.length / Math.max(labels.length - 1, 1))), vals.length - 1);
           return <text key={i} x={toX(idx, vals.length)} y={H - 8} textAnchor="middle" className="svg-axis-label">{label}</text>;
         })}
+        {hover && (
+          <SvgHoverTooltip {...hover} W={W} H={H} color="#38a169" guideTop={P} guideBottom={H - P} />
+        )}
       </svg>
       {!hasData && <p style={{ textAlign: "center", color: "#888", fontSize: "0.85rem" }}>Waiting for DataPlatform CO₂ data...</p>}
     </div>
@@ -57,8 +78,11 @@ export default function CarbonEmissions({ energies = [], carbonHistory = [], tot
   const dataSource = co2Energies.length > 0 ? "Direct measurement (DataPlatform)" : "Calculated: kWh × 0.718 (ONEE Morocco)";
   const hasDirectData = co2Energies.length > 0;
 
-  // Séries CO2 depuis l'historique backend
-  const co2Series    = carbonHistory.map(p => p.co2_kg).filter(v => v != null);
+  // Séries CO2 depuis l'historique backend (valeurs + timestamps alignés
+  // pour l'étiquette au survol du graphe)
+  const co2Points    = carbonHistory.filter(p => p.co2_kg != null);
+  const co2Series    = co2Points.map(p => p.co2_kg);
+  const co2Times     = co2Points.map(p => p.timestamp);
   const totalCo2Acc  = carbonHistory.reduce((s, p) => s + (p.co2_kg || 0), 0);
   const totalKwhAcc  = carbonHistory.reduce((s, p) => s + (p.kwh    || 0), 0);
   const avgIntensity = totalKwhAcc > 0 ? (totalCo2Acc / totalKwhAcc).toFixed(3) : CO2_FACTOR.toFixed(3);
@@ -66,9 +90,23 @@ export default function CarbonEmissions({ energies = [], carbonHistory = [], tot
   const labelCount = Math.min(7, co2Series.length);
   const labels = Array.from({ length: labelCount }, (_, i) => i === labelCount - 1 ? "now" : `-${(labelCount - 1 - i) * 2}m`);
 
+  // Objectif mensuel : -5 %. L'avancement est CALCULÉ depuis les données
+  // réelles de la DataPlatform : variation des émissions moyennes entre la
+  // première et la seconde moitié de l'historique reçu (positif = réduction).
+  // Sans données → "—" (rien n'est simulé).
   const TARGET_PCT = 5;
-  const achieved   = parseFloat(Math.min(TARGET_PCT, 3.2).toFixed(1));
-  const progressPct = Math.min(100, (achieved / TARGET_PCT) * 100).toFixed(0);
+  let achieved = null;
+  if (co2Series.length >= 8) {
+    const half = Math.floor(co2Series.length / 2);
+    const avgFirst  = co2Series.slice(0, half).reduce((s, v) => s + v, 0) / half;
+    const avgSecond = co2Series.slice(half).reduce((s, v) => s + v, 0) / (co2Series.length - half);
+    if (avgFirst > 0) {
+      achieved = parseFloat((((avgFirst - avgSecond) / avgFirst) * 100).toFixed(1));
+    }
+  }
+  const progressPct = achieved != null
+    ? Math.max(0, Math.min(100, (achieved / TARGET_PCT) * 100)).toFixed(0)
+    : null;
 
   // KPI CO2 par équipement
   const equipmentCo2 = {};
@@ -152,18 +190,28 @@ export default function CarbonEmissions({ energies = [], carbonHistory = [], tot
               </p>
             </div>
           </div>
-          <CarbonLineChart data={co2Series} labels={labels} />
+          <CarbonLineChart data={co2Series} labels={labels} timestamps={co2Times} />
         </section>
 
         <section className="panel-card target-card">
           <div className="panel-head">
             <div><h2>Reduction Target</h2><p>Monthly CO₂ performance</p></div>
           </div>
-          <div className="progress-circle">{progressPct}%</div>
+          <div className="progress-circle">{progressPct != null ? `${progressPct}%` : "—"}</div>
           <div className="target-metrics">
             <div><span>Monthly Target</span><strong>-{TARGET_PCT}% CO₂ reduction</strong></div>
-            <div><span>Current Achievement</span><strong className="green-text">-{achieved}%</strong></div>
-            <div><span>Remaining</span><strong className="yellow-text">-{(TARGET_PCT - achieved).toFixed(1)}% to go</strong></div>
+            <div>
+              <span>Current Achievement</span>
+              <strong className={achieved != null && achieved >= 0 ? "green-text" : "yellow-text"}>
+                {achieved != null ? `${achieved >= 0 ? "-" : "+"}${Math.abs(achieved)}%` : "— waiting data"}
+              </strong>
+            </div>
+            <div>
+              <span>Remaining</span>
+              <strong className="yellow-text">
+                {achieved != null ? `${Math.max(0, TARGET_PCT - achieved).toFixed(1)}% to go` : "—"}
+              </strong>
+            </div>
             <div><span>Emission Factor</span><strong>{CO2_FACTOR} kgCO₂/kWh (ONEE)</strong></div>
           </div>
           <div className="target-status">

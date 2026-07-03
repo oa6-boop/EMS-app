@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import TagFilter from "../components/TagFilter.jsx";
 import { fetchIndustryAlarms, fetchIndustryKpis, resolveAlarm } from "../api/industryApi";
 import { fetchAllLinesSummary, fetchStructure } from "../api/emsApi";
+import { svgEventPoint, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
 const toMAD = (v) => `${Number(v || 0).toFixed(2)} MAD`;
 
@@ -12,6 +13,7 @@ const SEVERITY_COLORS = {
 };
 
 function BarChart({ lines, metric, color = "#4299e1" }) {
+  const [hover, setHover] = useState(null);
   const values = Object.entries(lines).map(([name, data]) => ({
     name,
     value: parseFloat(data[metric] || 0),
@@ -23,11 +25,28 @@ function BarChart({ lines, metric, color = "#4299e1" }) {
 
   if (values.length === 0) return null;
 
+  // Étiquette au survol d'une barre : ligne + métrique + valeur exacte
+  const slotW = (W - 40) / values.length;
+  const handleMove = (evt) => {
+    const { x } = svgEventPoint(evt, W, H);
+    const i = Math.max(0, Math.min(values.length - 1, Math.floor((x - 20) / slotW)));
+    const item = values[i];
+    if (!item) return;
+    const barH = Math.max(4, (item.value / maxVal) * (H - 40));
+    setHover({
+      x: 20 + i * slotW + (slotW - 8) / 2,
+      y: H - 25 - barH,
+      lines: [item.name, `${metric}: ${item.value.toFixed(3)}`],
+    });
+  };
+
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", height: H }}
       preserveAspectRatio="none"
+      onMouseMove={handleMove}
+      onMouseLeave={() => setHover(null)}
     >
       {values.map((item, i) => {
         const barW = (W - 40) / values.length - 8;
@@ -44,7 +63,7 @@ function BarChart({ lines, metric, color = "#4299e1" }) {
               height={barH}
               fill={color}
               rx="4"
-              opacity="0.85"
+              opacity={hover && hover.lines[0] === item.name ? 1 : 0.85}
             />
 
             <text
@@ -70,6 +89,9 @@ function BarChart({ lines, metric, color = "#4299e1" }) {
           </g>
         );
       })}
+      {hover && (
+        <SvgHoverTooltip {...hover} W={W} H={H} color={color} guideTop={10} guideBottom={H - 25} />
+      )}
     </svg>
   );
 }
@@ -265,19 +287,7 @@ export default function IndustryOverview({
               <div className="carbon-card">
                 <h4>📦 Zones</h4>
                 <strong>{structure.zones.length}</strong>
-
-                {structure.zones.map((z) => (
-                  <span
-                    key={z}
-                    style={{
-                      display: "block",
-                      fontSize: "0.8rem",
-                      color: "#7c3aed",
-                    }}
-                  >
-                    {z}
-                  </span>
-                ))}
+                <span>Process zones on site</span>
               </div>
             )}
 
@@ -285,19 +295,7 @@ export default function IndustryOverview({
               <div className="carbon-card">
                 <h4>🏗️ Production Lines</h4>
                 <strong>{structure.lines.length}</strong>
-
-                {structure.lines.map((l) => (
-                  <span
-                    key={l}
-                    style={{
-                      display: "block",
-                      fontSize: "0.8rem",
-                      color: "#0891b2",
-                    }}
-                  >
-                    {l}
-                  </span>
-                ))}
+                <span>Active production lines</span>
               </div>
             )}
 

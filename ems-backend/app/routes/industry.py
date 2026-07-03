@@ -1,14 +1,16 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Alarm, EnergyHistory, TelemetryRecord
+from app.core.deps import get_current_active_user
+from app.models import Alarm, AuditLog, EnergyHistory, TelemetryRecord, User
 from app.utils import build_industry_kpis
 
-router = APIRouter(prefix="/api/industry", tags=["industry"])
+router = APIRouter(prefix="/api/industry", tags=["industry"],
+                   dependencies=[Depends(get_current_active_user)])
 
 
 @router.get("/kpis")
@@ -44,17 +46,52 @@ def get_alarms(db: Session = Depends(get_db)):
     ]
 
 
+# Roles autorises a resoudre une alarme. L'operateur est un OBSERVATEUR :
+# il est volontairement exclu (read-only). Cette regle est appliquee cote
+# serveur pour qu'elle ne soit pas contournable depuis le frontend.
+ROLES_ALLOWED_TO_RESOLVE = {"admin", "management", "maintenance"}
+
+
 @router.post("/alarms/{alarm_id}/resolve")
-def resolve_alarm(alarm_id: int, db: Session = Depends(get_db)):
+def resolve_alarm(
+    alarm_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    # 1) Verification du role (securite serveur, non contournable)
+    user_role = (current_user.role or "").lower().strip()
+    if user_role not in ROLES_ALLOWED_TO_RESOLVE:
+        raise HTTPException(
+            status_code=403,
+            detail="Your role is read-only and cannot resolve alarms.",
+        )
+
+    # 2) L'alarme doit exister -> vrai 404 si absente
     alarm = db.query(Alarm).filter(Alarm.id == alarm_id).first()
     if not alarm:
-        return {"message": "Alarm not found"}
+        raise HTTPException(status_code=404, detail="Alarm not found")
+
+    # 3) Idempotence : si deja resolue, on ne refait rien
+    if alarm.status == "resolved":
+        return {"message": "Alarm already resolved", "id": alarm.id}
 
     alarm.status = "resolved"
     alarm.resolved_at = datetime.utcnow()
+
+    # 4) Trace d'audit : qui a resolu quoi et quand
+    db.add(AuditLog(
+        action="RESOLVE_ALARM",
+        performed_by=f"{current_user.first_name} {current_user.last_name}",
+        target_user=None,
+        description=(
+            f"Alarme #{alarm.id} ({alarm.alarm_type}) resolue sur "
+            f"{alarm.equipment} / {alarm.production_line}"
+        ),
+    ))
+
     db.commit()
 
-    return {"message": "Alarm resolved successfully"}
+    return {"message": "Alarm resolved successfully", "id": alarm.id}
 
 
 @router.get("/history")

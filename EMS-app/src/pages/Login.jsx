@@ -58,7 +58,7 @@ export default function Login({ onLogin, onForgotPassword }) {
       <div className="login-card">
         <img src={logo} alt="EMS Logo" className="login-logo" />
         <h1 className="login-title">EMS</h1>
-        <p className="login-subtitle">Energy Management System — JESA Group</p>
+        <p className="login-subtitle">Energy Management System  JESA Group</p>
 
         <form onSubmit={handleSubmit} className="login-form">
           <input

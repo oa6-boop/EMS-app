@@ -3,10 +3,10 @@ import {
   AlertTriangle, PanelLeftClose, PanelLeftOpen, FileText,
   UserCircle2, Users, CloudSun, BellRing, MessagesSquare,
   ClipboardList, Factory, History, SlidersHorizontal,
-  Wrench, DollarSign,
+  Wrench, DollarSign, Network,
 } from "lucide-react";
 
-// ─── Pages par rôle ───────────────────────────────────────────────────────────
+
 const ROLE_PAGES = {
   admin: [
     { key: "dashboard",   label: "Dashboard Overview",   icon: BarChart3       },
@@ -17,9 +17,10 @@ const ROLE_PAGES = {
     { key: "carbon",      label: "Carbon Emissions",     icon: Leaf            },
     { key: "forecasting", label: "Forecasting",          icon: TrendingUp      },
     { key: "reports",     label: "Reports & Analytics",  icon: FileText        },
-    { key: "alarms",      label: "Alarms & Events",      icon: AlertTriangle   },
+    { key: "alarms",      label: "Alarms & Events",      icon: AlertTriangle,  badge: "alarm" },
+    { key: "sld",         label: "SLD Monitoring",       icon: Network         },
     { key: "history",     label: "Historical Data",      icon: History         },
-    { key: "maintenance", label: "Maintenance",          icon: Wrench          },
+    { key: "maintenance", label: "Maintenance",          icon: Wrench,         badge: "intervention" },
     { key: "prices",      label: "Energy Prices",        icon: DollarSign      },
     { key: "weather",     label: "Weather",              icon: CloudSun        },
     { key: "messages",    label: "Messages",             icon: MessagesSquare, badge: "message" },
@@ -28,12 +29,9 @@ const ROLE_PAGES = {
     { key: "thresholds",  label: "Alarm Thresholds",     icon: SlidersHorizontal },
     { key: "urgent",      label: "Urgent Messages",      icon: BellRing,       badge: "urgent" },
     { key: "audit",       label: "Audit Logs",           icon: ClipboardList   },
-        { key: "sld",         label: "SLD Monitoring",          icon: Activity    },
-
   ],
   management: [
     { key: "dashboard",   label: "Dashboard Overview",   icon: BarChart3       },
-    { key: "industry",    label: "Industry Overview",    icon: Factory         },
     { key: "carbon",      label: "Carbon Emissions",     icon: Leaf            },
     { key: "forecasting", label: "Forecasting",          icon: TrendingUp      },
     { key: "reports",     label: "Reports & Analytics",  icon: FileText        },
@@ -43,13 +41,14 @@ const ROLE_PAGES = {
     { key: "profile",     label: "My Profile",           icon: UserCircle2     },
   ],
   maintenance: [
+    { key: "industry",    label: "Industry Overview",    icon: Factory         },
     { key: "realtime",    label: "Real-Time Monitoring", icon: Activity        },
     { key: "equipment",   label: "Equipment Status",     icon: Settings        },
     { key: "power",       label: "Power Quality",        icon: Bolt            },
-    { key: "alarms",      label: "Alarms & Events",      icon: AlertTriangle   },
+    { key: "alarms",      label: "Alarms & Events",      icon: AlertTriangle,  badge: "alarm" },
     { key: "history",     label: "Historical Data",      icon: History         },
     { key: "thresholds",  label: "Alarm Thresholds",     icon: SlidersHorizontal },
-    { key: "maintenance", label: "Maintenance",          icon: Wrench          },
+    { key: "maintenance", label: "Maintenance",          icon: Wrench,         badge: "intervention" },
     { key: "weather",     label: "Weather",              icon: CloudSun        },
     { key: "messages",    label: "Messages",             icon: MessagesSquare, badge: "message" },
     { key: "profile",     label: "My Profile",           icon: UserCircle2     },
@@ -57,9 +56,8 @@ const ROLE_PAGES = {
   operator: [
     { key: "dashboard",   label: "Dashboard Overview",   icon: BarChart3   },
     { key: "equipment",   label: "Equipment Status",     icon: Settings    },
-        { key: "alarms",      label: "Alarms & Events",      icon: AlertTriangle   },
-
-    { key: "sld",         label: "SLD Monitoring",          icon: Activity    },
+    { key: "alarms",      label: "Alarms & Events",      icon: AlertTriangle, badge: "alarm" },
+    { key: "sld",         label: "SLD Monitoring",       icon: Network     },
     { key: "weather",     label: "Weather",              icon: CloudSun    },
     { key: "messages",    label: "Messages",             icon: MessagesSquare, badge: "message" },
     { key: "profile",     label: "My Profile",           icon: UserCircle2 },
@@ -81,6 +79,8 @@ export default function Sidebar({
   currentUser,
   urgentCount       = 0,
   messageNotifCount = 0,
+  alarmCount        = 0,
+  interventionCount = 0,
 }) {
   const role  = currentUser?.role || "management";
   const items = ROLE_PAGES[role]  || ROLE_PAGES.management;
@@ -112,8 +112,10 @@ export default function Sidebar({
       <ul>
         {items.map(item => {
           const Icon  = item.icon;
-          const badge = item.badge === "message" ? messageNotifCount
-                      : item.badge === "urgent"  ? urgentCount
+          const badge = item.badge === "message"      ? messageNotifCount
+                      : item.badge === "urgent"       ? urgentCount
+                      : item.badge === "alarm"        ? alarmCount
+                      : item.badge === "intervention" ? interventionCount
                       : 0;
           return (
             <li key={item.key}

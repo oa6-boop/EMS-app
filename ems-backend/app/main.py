@@ -173,6 +173,68 @@ def clean_simulator_data():
         db.close()
 
 
+def normalize_legacy_hierarchy():
+    """
+    Fusionne les anciennes écritures NON normalisées accumulées en base
+    (LINE-1 / Line 1 / EXTRACTION / STORAGE_HANDLING…) avec le format
+    canonique actuel (Production Line 1 / Extraction / Storage Handling).
+    Supprime les doublons de zones et de lignes SANS perdre l'historique.
+    Idempotent : ne fait rien si tout est déjà propre.
+    """
+    from app.mqtt_client import _normalize_line_name, _clean_display
+    from app.models import Alarm
+
+    db: Session = SessionLocal()
+    try:
+        merged = 0
+        for model in (TelemetryRecord, EnergyHistory, Alarm):
+            # Lignes : LINE-1 / Line 1 / line_1 → Production Line 1
+            for (old,) in db.query(model.production_line).distinct():
+                if not old:
+                    continue
+                new = _normalize_line_name(old)
+                if new != old:
+                    merged += db.query(model).filter(
+                        model.production_line == old
+                    ).update({"production_line": new}, synchronize_session=False)
+
+            # Zones : EXTRACTION → Extraction ; les agrégats legacy
+            # (Energy consumption / Total water consumption) → Line Total
+            for (old,) in db.query(model.area).distinct():
+                if not old:
+                    continue
+                low = str(old).strip().lower().replace("_", " ")
+                if low.startswith(("energy consumption", "total water")):
+                    new = "Line Total"
+                else:
+                    new = _clean_display(old)
+                if new != old:
+                    merged += db.query(model).filter(
+                        model.area == old
+                    ).update({"area": new}, synchronize_session=False)
+
+            # Plants et équipements : MAJUSCULES_UNDERSCORE → Title Case
+            for column_name in ("plant", "equipment"):
+                column = getattr(model, column_name)
+                for (old,) in db.query(column).distinct():
+                    if not old:
+                        continue
+                    new = _clean_display(old)
+                    if new != old:
+                        merged += db.query(model).filter(
+                            column == old
+                        ).update({column_name: new}, synchronize_session=False)
+
+        db.commit()
+        if merged > 0:
+            print(f"🧹 Legacy hierarchy normalized: {merged} rows merged (duplicates removed)")
+    except Exception as exc:
+        db.rollback()
+        print(f"Hierarchy normalization warning: {exc}")
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 async def startup_event():
     """
@@ -202,6 +264,7 @@ async def startup_event():
         create_default_admin()
         initialize_default_energy_rates()
         clean_simulator_data()
+        normalize_legacy_hierarchy()
 
         try:
             mqtt_client = start_mqtt()

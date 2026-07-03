@@ -432,19 +432,18 @@ export default function Messages() {
                       </div>
                     ) : message.message_type === "text" ? (
                       <p>{message.content}</p>
-                    ) : (
+                    ) : message.file_url ? (
                       <div>
-                        <p>{message.content}</p>
-                        {message.file_url && (
-                          <a
-                            href={message.file_url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {message.file_name || "Open file"}
-                          </a>
-                        )}
+                        <a
+                          href={message.file_url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          📄 {message.file_name || "Open file"}
+                        </a>
                       </div>
+                    ) : (
+                      <p>{message.content}</p>
                     )}
 
                     <small>{new Date(message.created_at).toLocaleString()}</small>

@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
+import { aggregateByEnergy } from "../utils/energyAggregation.js";
+import { svgEventPoint, nearestIndex, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
 function ForecastChart({ historical = [], predictions = [], unit = "", color = "#4299e1" }) {
   const W = 760, H = 260, PX = 45, PY = 20;
+  const [hover, setHover] = useState(null);
   const allVals = [...historical, ...predictions].filter((v) => v != null);
   if (allVals.length < 2) {
     return (
@@ -27,13 +30,34 @@ function ForecastChart({ historical = [], predictions = [], unit = "", color = "
     const v = minV + (rng * i) / 4;
     return { v: v.toFixed(unit === "" ? 3 : 1), y: toY(v) };
   });
+
+  // Étiquette au survol : distingue Historical / Forecast + valeur du point
+  const series = [...historical, ...predictions];
+  const handleMove = (evt) => {
+    if (series.length < 2) return;
+    const { x } = svgEventPoint(evt, W, H);
+    const i = nearestIndex(x, PX, W - PX - 10, series.length);
+    const v = series[i];
+    if (v == null) return;
+    const isForecast = i >= historical.length;
+    setHover({
+      x: toX(i),
+      y: toY(v),
+      lines: [
+        isForecast ? `Forecast +${i - historical.length + 1}` : `Historical · point ${i + 1}`,
+        `${Number(v).toFixed(2)} ${unit}`,
+      ],
+    });
+  };
+
   return (
     <div>
       <div style={{ fontSize: "0.78rem", color: "#94a3b8", marginBottom: "0.5rem", display: "flex", gap: "1.5rem" }}>
         <span style={{ color }}>—— Historical</span>
         <span style={{ color, opacity: 0.6 }}>- - - Forecast</span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }} preserveAspectRatio="none">
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }} preserveAspectRatio="none"
+        onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
         <defs>
           <linearGradient id={`fgrad-${unit}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={color} stopOpacity="0.12" />
@@ -59,14 +83,19 @@ function ForecastChart({ historical = [], predictions = [], unit = "", color = "
         )}
         {historical.slice(-5).map((v, i) => {
           const idx = historical.length - 5 + i;
-          return <circle key={i} cx={toX(idx)} cy={toY(v)} r="3.5" fill={color} stroke="white" strokeWidth="1.5" />;
+          return <circle key={i} cx={toX(idx)} cy={toY(v)} r="3.5" fill={color} stroke="white" strokeWidth="1.5"><title>{`Historical — Point ${idx + 1}: ${Number(v).toFixed(2)} ${unit}`}</title></circle>;
         })}
         {predictions.map((v, i) => (
-          <circle key={i} cx={toX(predOffset + i)} cy={toY(v)} r="3" fill={color} stroke="white" strokeWidth="1.5" opacity="0.7" />
+          <circle key={i} cx={toX(predOffset + i)} cy={toY(v)} r="3" fill={color} stroke="white" strokeWidth="1.5" opacity="0.7">
+            <title>{`Forecast +${i + 1} — ${Number(v).toFixed(2)} ${unit}`}</title>
+          </circle>
         ))}
         <text x={W - 10} y={H - 10} fontSize="9" fill={color} textAnchor="end" opacity="0.7">
           +{predictions.length} forecast
         </text>
+        {hover && (
+          <SvgHoverTooltip {...hover} W={W} H={H} color={color} guideTop={PY} guideBottom={H - 25} />
+        )}
       </svg>
     </div>
   );
@@ -93,6 +122,9 @@ export default function Forecasting({ energies = [], selectedLineLabel = "Produc
   const electricEnergies = energies.filter((e) => e.unit === "kW");
   const totalKw          = electricEnergies.reduce((s, e) => s + e.value, 0);
   const kwhE             = energies.find((e) => e.unit === "kWh");
+
+  // Résumé par énergie : UNE carte par énergie (agrégée sur les équipements)
+  const energySummary = aggregateByEnergy(energies);
 
   return (
     <div className="overview-page">
@@ -186,9 +218,9 @@ export default function Forecasting({ energies = [], selectedLineLabel = "Produc
           <p>{view} view</p>
         </div>
         <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
-          {energies.length > 0 ? (
-            energies.map((energy) => (
-              <div className="kpi-card" key={energy.id}>
+          {energySummary.length > 0 ? (
+            energySummary.map((energy) => (
+              <div className="kpi-card" key={`${energy.name}-${energy.unit}`}>
                 <div className="kpi-icon blue">📈</div>
                 <h3>
                   {(energy.value * (view === "daily" ? 1.05 : view === "weekly" ? 1.08 : 1.12)).toFixed(2)} {energy.unit}

@@ -733,7 +733,9 @@ tbody tr:hover td { background: rgba(37, 99, 235, 0.03); }
 .svg-chart-head h4   { font-size: 0.95rem; font-weight: 700; color: var(--text-main); }
 .svg-chart-head span { font-size: 0.8rem; color: var(--text-secondary); }
 
-.svg-line-chart  { width: 100%; overflow: visible; display: block; }
+.svg-line-chart  { width: 100%; overflow: visible; display: block; cursor: crosshair; }
+/* Tous les graphiques interactifs : le curseur invite au survol (tooltips) */
+.panel-card svg, .svg-chart-card svg { cursor: crosshair; }
 .svg-grid-line   { stroke: #e2e8f0; stroke-width: 1; stroke-dasharray: 4, 4; }
 .svg-main-line   { stroke: #4299e1; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
 .svg-point       { fill: #4299e1; }
@@ -835,11 +837,25 @@ tbody tr:hover td { background: rgba(37, 99, 235, 0.03); }
   border-radius: 10px;
   border:        1px solid var(--border-color);
   font-size:     0.9rem;
+  line-height:   1.4;
   background:    var(--bg-main);
   color:         var(--text-main);
   margin-bottom: 0.75rem;
   outline:       none;
   transition:    border-color 0.2s;
+}
+
+/* Le select doit afficher le texte de l'option en entier (pas coupe) */
+.forgot-modal select {
+  height:        auto;
+  min-height:    44px;
+  line-height:   1.4;
+  text-overflow: ellipsis;
+  white-space:   nowrap;
+  overflow:      hidden;
+  padding-right: 2rem;            /* place pour la fleche native */
+  -webkit-appearance: menulist;
+          appearance: menulist;
 }
 .forgot-modal input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
 

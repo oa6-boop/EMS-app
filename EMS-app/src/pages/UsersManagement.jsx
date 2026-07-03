@@ -13,14 +13,27 @@ export default function UsersManagement({ users, onCreateUser, onDeleteUser, onU
   const [search,     setSearch]     = useState("");
   const [filterRole, setFilterRole] = useState("all");
   const [updatingId, setUpdatingId] = useState(null);
+  const [formError,  setFormError]  = useState("");
+  const [creating,   setCreating]   = useState(false);
 
   const handleChange = e => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
-  const handleSubmit = e => {
+  const handleSubmit = async e => {
     e.preventDefault();
-    onCreateUser(form);
-    setForm({ firstName: "", lastName: "", email: "", password: "", role: "management" });
-    setShowForm(false);
+    setFormError("");
+    setCreating(true);
+    try {
+      // On ATTEND la création : si le backend refuse (email non @jesagroup.com,
+      // mot de passe < 6 caractères, email déjà existant…), une erreur est levée.
+      await onCreateUser(form);
+      // Succès uniquement : on vide et on ferme le formulaire.
+      setForm({ firstName: "", lastName: "", email: "", password: "", role: "management" });
+      setShowForm(false);
+    } catch (err) {
+      setFormError(err?.message || "Failed to create user");
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleRoleChange = async (userId, newRole) => {
@@ -49,7 +62,7 @@ export default function UsersManagement({ users, onCreateUser, onDeleteUser, onU
         </div>
         <button
           type="button"
-          onClick={() => setShowForm(p => !p)}
+          onClick={() => { setShowForm(p => !p); setFormError(""); }}
           style={{
             background: showForm ? "#64748b" : "#2563eb",
             color: "#fff", border: "none", borderRadius: "10px",
@@ -145,12 +158,23 @@ export default function UsersManagement({ users, onCreateUser, onDeleteUser, onU
                 </div>
               </div>
 
-              <button type="submit" style={{
-                background: "#38a169", color: "#fff", border: "none",
+              {formError && (
+                <div style={{
+                  background: "#fff5f5", color: "#c53030",
+                  border: "1px solid #fed7d7", borderRadius: "8px",
+                  padding: "0.6rem 0.9rem", marginBottom: "0.75rem",
+                  fontSize: "0.85rem", fontWeight: 600,
+                }}>
+                  ⚠️ {formError}
+                </div>
+              )}
+
+              <button type="submit" disabled={creating} style={{
+                background: creating ? "#94a3b8" : "#38a169", color: "#fff", border: "none",
                 borderRadius: "8px", padding: "0.6rem 1.5rem",
-                cursor: "pointer", fontWeight: 700, fontSize: "0.9rem",
+                cursor: creating ? "default" : "pointer", fontWeight: 700, fontSize: "0.9rem",
               }}>
-                ✓ Create User
+                {creating ? "Creating…" : "✓ Create User"}
               </button>
             </form>
           </div>

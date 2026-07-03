@@ -19,10 +19,16 @@ Application de gestion de l'énergie industrielle
 ```bash
 cd EMS/EMS_Dataplatform-main
 docker compose down -v
-docker compose up --build
+docker compose up --build -d
 ```
 
-Attendre 3 minutes puis ouvrir : **http://localhost:5173**
+Attendre 3-4 minutes (Kafka + Flink + Node-RED démarrent) puis ouvrir : **http://localhost:5173**
+
+Vérifier que les données circulent :
+```bash
+docker logs bridge --tail 20        # messages MQTT → Kafka
+docker logs ems-backend --tail 20   # ingestion des mesures
+```
 
 **Compte admin :**
 - Email : admin@jesagroup.com
@@ -36,7 +42,8 @@ Attendre 3 minutes puis ouvrir : **http://localhost:5173**
 
 ```bash
 cd EMS/EMS_Dataplatform-main
-docker compose up mqtt-broker modbus-sim modbus-publisher postgres pgadmin
+docker compose up -d mqtt-broker nodered postgres pgadmin
+# (optionnel, chaîne data complète : kafka kafka-init bridge timescaledb)
 ```
 
 ### Terminal 2 — Lancer le backend
@@ -139,21 +146,35 @@ npm run dev
 
 ---
 
-## Architecture technique
+## Architecture technique (DataPlatform Al Youssoufia)
 
 ```
-Modbus Simulator (port 1502)
-        ↓
-modbus-publisher (Node.js, toutes les 5s)
-        ↓
+Node-RED (simulation OPC UA — Al Youssoufia Plant, toutes les 2-10s)
+        ↓ topics : Al_Youssoufia_Plant/Line-1/<Zone>/<Equipement>/<PMx|Process_Variables>
 MQTT Broker Mosquitto (port 1883)
-        ↓
-ems-backend (FastAPI Python)
-        ↓
-PostgreSQL + WebSocket broadcast
-        ↓
-React Frontend (polling 5s + WebSocket < 1s)
+        ├──→ Bridge (Node.js) → Kafka (ems.L1.*) → Flink → TimescaleDB   [chaîne DataPlatform]
+        └──→ ems-backend (FastAPI, s'abonne à «#»)
+                    ↓
+             PostgreSQL app (ems_app_db) + WebSocket broadcast
+                    ↓
+             React Frontend (polling 5s + WebSocket < 1s)
 ```
+
+Hiérarchie : **Plant → Line → Zone → Equipment** (extraite automatiquement du topic MQTT).
+Zones : Extraction, Washing, Flotation, Utilities, Storage & Handling.
+
+### Mesures reçues de la DataPlatform
+
+| Famille | Mesures |
+|---|---|
+| Électrique (PM1-7) | tension L1N/L2N/L3N (moyennées), courants L1/L2/L3, fréquence, PF, THD tension & courant, **kW actif, kVAR réactif, kVA apparent, kWh**, breaker status, alarm trip |
+| Procédé | vitesses (convoyeur/pompe/agitateur), débits & volumes d'eau (m³), température, pression & débit d'air comprimé |
+| Vapeur / Fuel | débit + totalisateur + pression + température (steam & fuel) |
+| Production | débit du Weigh Belt Scale → **Production Rate (t/h)** |
+| Agrégats ligne | consommation d'eau totale |
+
+### Alarmes automatiques (générées par le backend selon les seuils configurés)
+`UNDERVOLTAGE / OVERVOLTAGE · UNDER/OVERFREQUENCY · LOW_POWER_FACTOR · HIGH_THD · HIGH_CONSUMPTION · EQUIPMENT_TRIP` (trip envoyé par la DataPlatform)
 
 ---
 
@@ -182,11 +203,12 @@ Tables créées automatiquement au démarrage :
 Copier `.env.example` vers `.env` dans `ems-backend/` :
 
 ```env
-# Base de données
-DATABASE_URL=postgresql://ems_user:ems_password@localhost:5432/ems_db
+# Base de données (app) — postgres du docker-compose, port 5432
+DATABASE_URL=postgresql://ems_app_user:ems_app_password@localhost:5432/ems_app_db
 
 # MQTT — Local
 MQTT_BROKER=localhost
+MQTT_TOPIC=#
 
 # MQTT — Docker (changer si docker compose)
 # MQTT_BROKER=mqtt-broker

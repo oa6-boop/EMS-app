@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { fetchChartData } from "../api/emsApi";
+import { svgEventPoint, nearestIndex, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
 function LiveChart({ chartData, height = 200 }) {
+  const [hover, setHover] = useState(null);
   if (!chartData) return (
     <div style={{ height, display:"flex", alignItems:"center",
       justifyContent:"center", color:"#888", fontSize:"0.85rem" }}>
@@ -39,9 +41,25 @@ function LiveChart({ chartData, height = 200 }) {
     return { v: v.toFixed(unit === "" ? 3 : 1), y: toY(v) };
   });
 
+  // Étiquette au survol : heure exacte + valeur mesurée du point
+  const timestamps = chartData.timestamps || [];
+  const handleMove = (evt) => {
+    const { x } = svgEventPoint(evt, W, H);
+    const i = nearestIndex(x, PX, W - PX - 10, values.length);
+    const when = timestamps[i]
+      ? new Date(timestamps[i]).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : `Point ${i + 1}/${values.length}`;
+    setHover({
+      x: toX(i),
+      y: toY(values[i]),
+      lines: [when, `${Number(values[i]).toFixed(unit === "" ? 3 : 2)} ${unit}`.trim()],
+    });
+  };
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:H, overflow:"visible" }}
-      preserveAspectRatio="none">
+      preserveAspectRatio="none"
+      onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
 
       {yLabels.map((l, i) => (
         <g key={i}>
@@ -84,12 +102,17 @@ function LiveChart({ chartData, height = 200 }) {
         const idx = values.length - 5 + i;
         return (
           <circle key={i} cx={toX(idx)} cy={toY(v)}
-            r="3.5" fill={color} stroke="white" strokeWidth="1.5" />
+            r="3.5" fill={color} stroke="white" strokeWidth="1.5">
+            <title>{`${chartData.label || "Value"} — Point ${idx + 1}: ${Number(v).toFixed(unit === "" ? 3 : 2)} ${unit}`}</title>
+          </circle>
         );
       })}
 
       <text x={PX} y={H-8} fontSize="10" fill="#94a3b8">oldest</text>
       <text x={W-10} y={H-8} fontSize="10" fill="#94a3b8" textAnchor="end">now</text>
+      {hover && (
+        <SvgHoverTooltip {...hover} W={W} H={H} color={color} guideTop={PY} guideBottom={H - 25} />
+      )}
     </svg>
   );
 }

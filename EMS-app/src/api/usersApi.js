@@ -28,6 +28,11 @@ async function apiFetch(url, options = {}, token = null) {
 export const fetchUsers = (token) =>
   apiFetch(`${API_BASE_URL}/api/users`, {}, token);
 
+// Techniciens de maintenance actifs — accessible à tous les rôles connectés
+// (sert au menu "Technician" de la page Maintenance).
+export const fetchTechnicians = (token) =>
+  apiFetch(`${API_BASE_URL}/api/users/technicians`, {}, token);
+
 export const createUser = (data, token) =>
   apiFetch(
     `${API_BASE_URL}/api/users`,

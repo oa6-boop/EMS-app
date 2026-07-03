@@ -2,7 +2,7 @@ import os
 import shutil
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import JSONResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -293,6 +293,7 @@ def send_message(
 
 @router.post("/conversations/{conversation_id}/upload")
 def upload_file_to_chat(
+    request: Request,
     conversation_id: int,
     uploaded_file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -308,7 +309,10 @@ def upload_file_to_chat(
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(uploaded_file.file, buffer)
 
-    public_url = f"http://127.0.0.1:8000/uploads/{unique_name}"
+    # URL construite a partir de l'hote reel de la requete : fonctionne aussi
+    # bien en localhost que depuis une IP du reseau local (demo sur un autre PC).
+    base = str(request.base_url).rstrip("/")
+    public_url = f"{base}/uploads/{unique_name}"
 
     message = Message(
         conversation_id=conversation_id,

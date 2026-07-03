@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { svgEventPoint, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
 // ─── Tarifs ONEE Maroc en MAD/kWh ────────────────────────────────────────────
 const ONEE_TARIFFS = {
@@ -23,11 +24,33 @@ function formatHour(h) {
 function HourlyCostChart({ hourlyData }) {
   const W    = 700;
   const H    = 180;
+  const [hover, setHover] = useState(null);
   const maxV = Math.max(...hourlyData.map(d => d.cost), 0.001);
   const barW = (W - 40) / 24;
 
+  // Étiquette au survol d'une barre : heure + coût + tranche tarifaire + kWh
+  const handleMove = (evt) => {
+    const { x } = svgEventPoint(evt, W, H);
+    const i = Math.max(0, Math.min(23, Math.floor((x - 20) / barW)));
+    const item = hourlyData[i];
+    if (!item) return;
+    const tariff = ONEE_TARIFFS[item.tariffKey];
+    const barH = Math.max(3, (item.cost / maxV) * (H - 45));
+    setHover({
+      x: 20 + i * barW + barW / 2,
+      y: H - 30 - barH,
+      lines: [
+        formatHour(i),
+        `${item.cost.toFixed(2)} MAD`,
+        `${(item.kwh ?? 0).toFixed(1)} kWh · ${tariff.rate} MAD/kWh`,
+        tariff.label,
+      ],
+    });
+  };
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }} preserveAspectRatio="none">
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }} preserveAspectRatio="none"
+      onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
       {[0,1,2,3].map(i => (
         <line key={i} x1={20} y1={10 + i * (H-35)/3}
           x2={W-10} y2={10 + i * (H-35)/3}
@@ -41,7 +64,8 @@ function HourlyCostChart({ hourlyData }) {
         return (
           <g key={i}>
             <rect x={x} y={y} width={barW-4} height={barH}
-              fill={tariff.color} rx="3" opacity="0.85" />
+              fill={tariff.color} rx="3"
+              opacity={hover && hourlyData[i] && hover.lines[0] === formatHour(i) ? 1 : 0.85} />
             {i % 4 === 0 && (
               <text x={x + (barW-4)/2} y={H-14}
                 textAnchor="middle" fontSize="9" fill="var(--text-secondary)">
@@ -51,6 +75,9 @@ function HourlyCostChart({ hourlyData }) {
           </g>
         );
       })}
+      {hover && (
+        <SvgHoverTooltip {...hover} W={W} H={H} color="#ed8936" guideTop={10} guideBottom={H - 30} />
+      )}
       {Object.entries(ONEE_TARIFFS).map(([key, t], i) => (
         <g key={key}>
           <rect x={20 + i*160} y={H-6} width={10} height={6} fill={t.color} rx="2" />

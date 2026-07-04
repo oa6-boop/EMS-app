@@ -37,7 +37,9 @@ TIMESCALE_PORT      = int(os.environ.get("TIMESCALE_PORT", "5432"))
 TIMESCALE_DB        = os.environ.get("TIMESCALE_DB", "ems_db")
 TIMESCALE_USER      = os.environ.get("TIMESCALE_USER", "ems_user")
 TIMESCALE_PASSWORD  = os.environ.get("TIMESCALE_PASSWORD", "ems_password")
-TIMESCALE_JDBC_URL  = "jdbc:postgresql://postgres:5432/ems"
+TIMESCALE_JDBC_URL  = (
+    f"jdbc:postgresql://{TIMESCALE_HOST}:{TIMESCALE_PORT}/{TIMESCALE_DB}"
+)
 
 # ── Flink job ─────────────────────────────────────────────────────────────────
 FLINK_PARALLELISM       = int(os.environ.get("FLINK_PARALLELISM", "2"))

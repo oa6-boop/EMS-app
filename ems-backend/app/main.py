@@ -235,6 +235,64 @@ def normalize_legacy_hierarchy():
         db.close()
 
 
+def normalize_legacy_units():
+    """
+    Harmonise les unités des enregistrements existants : d'anciennes versions
+    de l'ingestion ont écrit les mêmes énergies avec des unités différentes
+    (Steam '' vs tonne, Reactive Power kW vs kVAR…), ce qui créait des cartes
+    en double. Supprime aussi les séries par phase redondantes (Current L1/2/3
+    — déjà moyennées dans les métadonnées Power Quality). Idempotent.
+    """
+    UNIT_FIXES = [
+        # (energy_name, ancienne unité, nouvelle unité)
+        ("Steam",             "",     "tonne"),
+        ("Fuel",              "",     "L"),
+        ("Steam Pressure",    "",     "bar"),
+        ("Fuel Pressure",     "",     "bar"),
+        ("Air Pressure",      "",     "bar"),
+        ("Steam Temperature", "",     "°C"),
+        ("Fuel Temperature",  "",     "°C"),
+        ("Breaker Status",    "",     "on/off"),
+        ("Status",            "",     "on/off"),
+        ("Reactive Power",    "kW",   "kVAR"),
+        ("Speed",             "unit", ""),
+    ]
+    DROP_SERIES = ["Current L1", "Current L2", "Current L3", "Alarm Trip"]
+
+    from app.models import Alarm
+    db: Session = SessionLocal()
+    try:
+        fixed = 0
+        for model in (TelemetryRecord, EnergyHistory):
+            for name, old_unit, new_unit in UNIT_FIXES:
+                fixed += db.query(model).filter(
+                    model.energy_name == name, model.unit == old_unit
+                ).update({"unit": new_unit}, synchronize_session=False)
+            for name in DROP_SERIES:
+                fixed += db.query(model).filter(
+                    model.energy_name == name
+                ).delete(synchronize_session=False)
+        # Weigh Belt Scales : leurs débits sont de la PRODUCTION (t/h),
+        # pas de l'eau — reclassés en "Production Rate" (KPI phosphate + SEC).
+        for model in (TelemetryRecord, EnergyHistory):
+            fixed += db.query(model).filter(
+                model.energy_name == "Flow Rate",
+                (model.equipment.ilike("%weigh%")) | (model.equipment.ilike("%scale%")),
+            ).update(
+                {"energy_name": "Production Rate", "unit": "t/h"},
+                synchronize_session=False,
+            )
+
+        db.commit()
+        if fixed > 0:
+            print(f"🧹 Legacy units harmonized: {fixed} rows fixed")
+    except Exception as exc:
+        db.rollback()
+        print(f"Units normalization warning: {exc}")
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 async def startup_event():
     """
@@ -265,6 +323,7 @@ async def startup_event():
         initialize_default_energy_rates()
         clean_simulator_data()
         normalize_legacy_hierarchy()
+        normalize_legacy_units()
 
         try:
             mqtt_client = start_mqtt()

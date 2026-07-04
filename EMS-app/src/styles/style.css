@@ -736,6 +736,13 @@ tbody tr:hover td { background: rgba(37, 99, 235, 0.03); }
 .svg-line-chart  { width: 100%; overflow: visible; display: block; cursor: crosshair; }
 /* Tous les graphiques interactifs : le curseur invite au survol (tooltips) */
 .panel-card svg, .svg-chart-card svg { cursor: crosshair; }
+
+/* Cartes graphiques : légère élévation au survol — cohérent avec les KPI */
+.panel-card, .svg-chart-card { transition: box-shadow 0.25s ease, transform 0.25s ease; }
+.panel-card:hover, .svg-chart-card:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+}
 .svg-grid-line   { stroke: #e2e8f0; stroke-width: 1; stroke-dasharray: 4, 4; }
 .svg-main-line   { stroke: #4299e1; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
 .svg-point       { fill: #4299e1; }

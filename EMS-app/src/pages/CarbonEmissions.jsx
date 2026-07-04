@@ -91,17 +91,30 @@ export default function CarbonEmissions({ energies = [], carbonHistory = [], tot
   const labels = Array.from({ length: labelCount }, (_, i) => i === labelCount - 1 ? "now" : `-${(labelCount - 1 - i) * 2}m`);
 
   // Objectif mensuel : -5 %. L'avancement est CALCULÉ depuis les données
-  // réelles de la DataPlatform : variation des émissions moyennes entre la
-  // première et la seconde moitié de l'historique reçu (positif = réduction).
-  // Sans données → "—" (rien n'est simulé).
+  // réelles de la DataPlatform. IMPORTANT : le CO₂ dérive souvent du compteur
+  // kWh CUMULÉ (série toujours croissante) — comparer les moyennes brutes
+  // donnerait toujours "0 %". On détecte les séries cumulées et on travaille
+  // alors sur les INCRÉMENTS (taux d'émission), qui peuvent monter ou baisser.
   const TARGET_PCT = 5;
   let achieved = null;
   if (co2Series.length >= 8) {
-    const half = Math.floor(co2Series.length / 2);
-    const avgFirst  = co2Series.slice(0, half).reduce((s, v) => s + v, 0) / half;
-    const avgSecond = co2Series.slice(half).reduce((s, v) => s + v, 0) / (co2Series.length - half);
-    if (avgFirst > 0) {
-      achieved = parseFloat((((avgFirst - avgSecond) / avgFirst) * 100).toFixed(1));
+    let rises = 0;
+    for (let i = 1; i < co2Series.length; i++) {
+      if (co2Series[i] >= co2Series[i - 1]) rises++;
+    }
+    const isCumulative = rises / (co2Series.length - 1) > 0.9;
+    const series = isCumulative
+      ? co2Series.slice(1).map((v, i) => Math.max(0, v - co2Series[i]))
+      : co2Series;
+
+    const half = Math.floor(series.length / 2);
+    if (half >= 2) {
+      const avgFirst  = series.slice(0, half).reduce((s, v) => s + v, 0) / half;
+      const avgSecond = series.slice(half).reduce((s, v) => s + v, 0) / (series.length - half);
+      if (avgFirst > 0) {
+        const raw = ((avgFirst - avgSecond) / avgFirst) * 100;
+        achieved = parseFloat(Math.max(-100, Math.min(100, raw)).toFixed(1));
+      }
     }
   }
   const progressPct = achieved != null

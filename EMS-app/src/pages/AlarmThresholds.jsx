@@ -209,7 +209,7 @@ export default function AlarmThresholds() {
         <div>
           <h1>Alarm Thresholds</h1>
           <p className="page-subtitle">
-            Configure alarm limits — changes apply to all new alarms immediately
+            Configure alarm limits 
           </p>
         </div>
         <div style={{ display: "flex", gap: "0.75rem" }}>
@@ -311,7 +311,6 @@ export default function AlarmThresholds() {
       <section className="section-block">
         <div className="section-title-wrap">
           <h2>Configure Thresholds</h2>
-          <p>Adjust alarm limits using the sliders or type values directly</p>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>

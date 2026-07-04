@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, distinct
 from sqlalchemy.orm import Session
@@ -6,7 +7,7 @@ from app.core.deps import get_current_active_user
 from app.db import get_db
 from app.models import TelemetryRecord
 
-CO2_FACTOR_KG_PER_KWH = 0.718   # ONEE Maroc (corrigé)
+CO2_FACTOR_KG_PER_KWH = float(os.getenv("CO2_FACTOR_KG_PER_KWH", "0.718"))  # ONEE Maroc — configurable
 ELEC_RATE_MAD         = 1.40    # tarif électricité
 
 router = APIRouter(prefix="/api/charts", tags=["charts"],

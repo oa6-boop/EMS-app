@@ -1,11 +1,15 @@
 """
 utils.py — Calcul automatique des coûts MAD pour toutes les énergies
 """
+import os
 import random
 import string
 from collections import defaultdict
 
-CO2_FACTOR_KG_PER_KWH = 0.718  # ONEE Maroc
+# Facteur d'émission CO₂ (kgCO₂/kWh) — configurable par variable
+# d'environnement pour suivre les futures évolutions de la DataPlatform
+# sans toucher au code. Défaut : facteur ONEE Maroc.
+CO2_FACTOR_KG_PER_KWH = float(os.getenv("CO2_FACTOR_KG_PER_KWH", "0.718"))
 
 ENERGY_RATES_MASTER = {
     "electricity": 1.40,

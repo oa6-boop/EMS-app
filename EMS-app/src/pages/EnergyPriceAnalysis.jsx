@@ -169,7 +169,7 @@ export default function EnergyPriceAnalysis({
       <section className="section-block">
         <div className="section-title-wrap">
           <h2>Real Consumption (live)</h2>
-          <p>Actual cumulative data from DataPlatform — {selectedLineLabel}</p>
+          <p>Actual cumulative {selectedLineLabel}</p>
         </div>
         <div className="carbon-kpis">
           <div className="carbon-card">

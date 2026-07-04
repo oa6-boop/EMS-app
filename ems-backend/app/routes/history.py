@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, func, distinct
 from sqlalchemy.orm import Session
@@ -12,7 +13,7 @@ router = APIRouter(prefix="/api/history", tags=["history"],
                    dependencies=[Depends(get_current_active_user)])
 
 ELEC_RATE_MAD = 1.40          # tarif électricité ONEE
-CO2_FACTOR    = 0.718         # facteur ONEE Maroc
+CO2_FACTOR    = float(os.getenv("CO2_FACTOR_KG_PER_KWH", "0.718"))  # ONEE Maroc — configurable
 
 # Map nom logique → (nom exact, unité) pour ne PAS mélanger
 # "Electricity" (kW, puissance) avec "Electricity-kWh" (compteur cumulé)

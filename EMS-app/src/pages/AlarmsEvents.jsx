@@ -256,48 +256,6 @@ export default function AlarmsEvents({
         )}
       </section>
 
-      <section className="section-block">
-        <div className="section-title-wrap">
-          <h2>Alarm Types Reference</h2>
-          <p>Power quality thresholds monitored by the system</p>
-        </div>
-
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(280px, 1fr))", gap:"0.75rem" }}>
-          {ALARM_TYPES_REF.map(ref => {
-            const style = SEVERITY_STYLE[ref.severity] || SEVERITY_STYLE.low;
-
-            return (
-              <div
-                key={ref.type}
-                style={{
-                  background: style.bg,
-                  border:`1px solid ${style.border}`,
-                  borderRadius:"10px",
-                  padding:"0.9rem 1rem",
-                }}
-              >
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"0.3rem" }}>
-                  <strong style={{ color: style.text, fontSize:"0.85rem" }}>{ref.type}</strong>
-                  <span style={{
-                    fontSize:"0.68rem", fontWeight:700, textTransform:"uppercase",
-                    color: style.text, background:"#fff",
-                    border:`1px solid ${style.border}`,
-                    borderRadius:"6px", padding:"1px 7px",
-                  }}>
-                    {ref.severity}
-                  </span>
-                </div>
-                <div style={{ fontSize:"0.82rem", color:"var(--text-main)", marginBottom:"0.2rem" }}>
-                  {ref.threshold}
-                </div>
-                <div style={{ fontSize:"0.76rem", color:"var(--text-secondary)" }}>
-                  {ref.desc}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
     </div>
   );
 }

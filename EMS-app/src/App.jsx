@@ -352,6 +352,12 @@ function App() {
   const [alarmCount, setAlarmCount] = useState(0);
   const [myInterventionCount, setMyInterventionCount] = useState(0);
 
+  // "Vu" : comme pour Messages, le badge disparaît quand l'utilisateur OUVRE
+  // la page concernée, et ne réapparaît que s'il y a du NOUVEAU depuis.
+  // Mémorisé par utilisateur (localStorage) pour survivre au refresh.
+  const [seenAlarmCount, setSeenAlarmCount] = useState(0);
+  const [seenInterventionCount, setSeenInterventionCount] = useState(0);
+
   const [powerQualityHistory, setPowerQualityHistory] = useState([]);
   const [carbonHistory, setCarbonHistory] = useState([]);
 
@@ -561,6 +567,44 @@ function App() {
     restore();
   }, []);
 
+  // ── Compteurs "vus" : chargés par utilisateur au login ──────────────────────
+  useEffect(() => {
+    if (!user?.id) return;
+    setSeenAlarmCount(Number(localStorage.getItem(`ems_seen_alarms_${user.id}`) || 0));
+    setSeenInterventionCount(Number(localStorage.getItem(`ems_seen_interventions_${user.id}`) || 0));
+  }, [user?.id]);
+
+  // Ouvrir la page Alarms & Events → tout est "vu" → le badge disparaît.
+  useEffect(() => {
+    if (!user?.id || activePage !== "alarms") return;
+    setSeenAlarmCount(alarmCount);
+    localStorage.setItem(`ems_seen_alarms_${user.id}`, String(alarmCount));
+  }, [activePage, alarmCount, user?.id]);
+
+  // Ouvrir la page Maintenance → interventions "vues" → le badge disparaît.
+  useEffect(() => {
+    if (!user?.id || activePage !== "maintenance") return;
+    setSeenInterventionCount(myInterventionCount);
+    localStorage.setItem(`ems_seen_interventions_${user.id}`, String(myInterventionCount));
+  }, [activePage, myInterventionCount, user?.id]);
+
+  // Réajustement : si des alarmes/interventions sont résolues (le total
+  // baisse sous le "vu"), on recale pour que les prochaines nouveautés
+  // fassent bien réapparaître le badge.
+  useEffect(() => {
+    if (alarmCount < seenAlarmCount) {
+      setSeenAlarmCount(alarmCount);
+      if (user?.id) localStorage.setItem(`ems_seen_alarms_${user.id}`, String(alarmCount));
+    }
+  }, [alarmCount, seenAlarmCount, user?.id]);
+
+  useEffect(() => {
+    if (myInterventionCount < seenInterventionCount) {
+      setSeenInterventionCount(myInterventionCount);
+      if (user?.id) localStorage.setItem(`ems_seen_interventions_${user.id}`, String(myInterventionCount));
+    }
+  }, [myInterventionCount, seenInterventionCount, user?.id]);
+
   // ── Notification ALARMES : badge rouge (nb d'alarmes actives) + toast à
   //    chaque nouvelle alarme — pour admin, technicien et operator.
   useEffect(() => {
@@ -756,28 +800,35 @@ function App() {
     return scopedEnergies.filter((e) => !isCumulativeEnergy(e));
   }, [scopedEnergies]);
 
-  // Mesures TECHNIQUES (qualité/état) — exclues du filtre "Energy Types" :
-  // ce ne sont pas des énergies consommées. Elles restent visibles dans les
-  // pages dédiées (Power Quality, Equipment Status, Real-Time).
-  const TECHNICAL_MEASUREMENTS = useMemo(() => new Set([
-    "breaker status", "apparent power", "reactive power", "thd current",
-    "temperature", "pressure", "speed", "air flow", "flow rate",
-    "steam pressure", "steam temperature", "fuel pressure", "fuel temperature",
-    "steam flow", "fuel flow", "status",
-  ]), []);
+  // Mesures TECHNIQUES (qualité/état/procédé) — exclues du filtre "Energy
+  // Types" : ce ne sont pas des énergies consommées. Correspondance par
+  // MOTS-CLÉS pour couvrir toutes les variantes (Belt Speed, Pump Speed,
+  // Air Pressure, Alarm Trip…). Elles restent visibles dans leurs pages
+  // dédiées (Power Quality, Equipment Status, Real-Time).
+  const TECHNICAL_KEYWORDS = useMemo(() => [
+    "breaker", "status", "trip", "apparent power", "reactive power",
+    "thd", "temperature", "pressure", "speed", "flow rate", "air flow",
+    "steam flow", "fuel flow", "current l", "voltage",
+    // Indicateurs (pas des énergies) : exclus du filtre "Energy Types"
+    "co2", "emission", "sec", "production",
+  ], []);
 
   // Liste STABLE (triée + même référence si contenu identique) : le panneau
   // de filtre ne "saute" plus pendant le polling temps réel.
   const stableNamesRef = useRef([]);
   const availableNames = useMemo(() => {
+    const isTechnical = (name) => {
+      const n = String(name || "").toLowerCase();
+      return TECHNICAL_KEYWORDS.some((k) => n.includes(k));
+    };
     const next = [...new Set(consumptionEnergies.map((e) => e.name))]
-      .filter((n) => !TECHNICAL_MEASUREMENTS.has(String(n || "").toLowerCase()))
+      .filter((n) => n && !isTechnical(n))
       .sort((a, b) => String(a).localeCompare(String(b)));
     if (JSON.stringify(next) !== JSON.stringify(stableNamesRef.current)) {
       stableNamesRef.current = next;
     }
     return stableNamesRef.current;
-  }, [consumptionEnergies, TECHNICAL_MEASUREMENTS]);
+  }, [consumptionEnergies, TECHNICAL_KEYWORDS]);
 
   const visibleEnergies = useMemo(() => {
     if (!selectedEnergyNames.length) return consumptionEnergies;
@@ -1122,7 +1173,7 @@ function App() {
                     fontSize: "0.9rem",
                   }}
                 >
-                  Single Line Diagram — view only
+                  Single Line Diagram 
                 </p>
               </div>
 
@@ -1190,8 +1241,8 @@ function App() {
         currentUser={user}
         urgentCount={urgentCount}
         messageNotifCount={messageNotifCount}
-        alarmCount={alarmCount}
-        interventionCount={myInterventionCount}
+        alarmCount={Math.max(0, alarmCount - seenAlarmCount)}
+        interventionCount={Math.max(0, myInterventionCount - seenInterventionCount)}
       />
 
       <div className="main">

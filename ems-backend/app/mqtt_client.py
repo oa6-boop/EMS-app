@@ -149,9 +149,11 @@ CANONICAL_MEASUREMENT_KEYS = {
         "water_m3", "total_water_m3", "water_consumption", "water_consumption_m3",
         "volume_totalised_m3", "volume_totalized_m3",
     },
+    # NB : steam_flow_rate / fuel_flow_rate / air_flow ne sont PAS des alias
+    # de flow_rate — ils passent au catch-all pour rester des séries
+    # distinctes (Steam Flow t/h, Fuel Flow L/h, Air Flow m³/h).
     "flow_rate": {
-        "flow", "instant_flow", "flow_rate", "water_flow", "air_flow",
-        "steam_flow_rate", "fuel_flow_rate",
+        "flow", "instant_flow", "flow_rate", "water_flow",
     },
 }
 
@@ -522,12 +524,29 @@ def infer_unit(key: str) -> str:
         return "kWh/unit"
     if "kwh" in lower:
         return "kWh"
+    # kVAR/kVA AVANT le test kW : "reactive_power_kvar" contient la
+    # sous-chaîne "active_power" et retournait "kW" par erreur.
+    if "kvar" in lower or "reactive" in lower:
+        return "kVAR"
+    if "kva" in lower or "apparent" in lower:
+        return "kVA"
     if lower.endswith("_kw") or "active_power" in lower:
         return "kW"
-    if "kvar" in lower:
-        return "kVAR"
-    if "kva" in lower:
-        return "kVA"
+    # Vapeur / fuel : totalisateurs facturables et débits distincts
+    if "steam" in lower and ("total" in lower or lower.endswith("_t")):
+        return "tonne"
+    if "steam" in lower and "flow" in lower:
+        return "t/h"
+    if "fuel" in lower and ("total" in lower or lower.endswith("_l")):
+        return "L"
+    if "fuel" in lower and "flow" in lower:
+        return "L/h"
+    if "pressure" in lower:
+        return "bar"
+    if "temperature" in lower or lower.endswith("_temp"):
+        return "°C"
+    if "breaker" in lower or "trip" in lower or lower == "status":
+        return "on/off"
     if lower.endswith("_m3") or "water" in lower and "flow" not in lower:
         return "m³"
     if "flow" in lower:
@@ -740,6 +759,52 @@ def check_threshold_alarms(meta: dict, active_kw) -> None:
                           active_kw, th.get("high_consumption_kw"))
 
 
+# ── PHOSPHATE : tonnes produites (cumul) ─────────────────────────────────────
+# Les balances (Weigh Belt Scales) mesurent un DÉBIT en t/h. Les tonnes
+# produites sont obtenues en intégrant ce débit dans le temps :
+#   tonnes += débit (t/h) × durée écoulée (h)
+# 100 % dérivé des mesures réelles de la DataPlatform (comme CO₂ = kWh × facteur).
+# Le cumul reprend sa dernière valeur en base après un redémarrage.
+_PHOSPHATE_TOTALS = {}
+
+
+def update_phosphate_total(meta: dict, rate_tph: float):
+    key = (meta["production_line"], meta["equipment"])
+    now = meta.get("timestamp") or datetime.utcnow()
+    state = _PHOSPHATE_TOTALS.get(key)
+
+    if state is None:
+        total = 0.0
+        db = SessionLocal()
+        try:
+            last = (
+                db.query(TelemetryRecord.value)
+                .filter(
+                    TelemetryRecord.energy_name == "Phosphate Production",
+                    TelemetryRecord.production_line == key[0],
+                    TelemetryRecord.equipment == key[1],
+                )
+                .order_by(TelemetryRecord.timestamp.desc())
+                .first()
+            )
+            if last:
+                total = float(last[0])
+        except Exception:
+            pass
+        finally:
+            db.close()
+        _PHOSPHATE_TOTALS[key] = {"total": total, "ts": now}
+        return round(total, 3)
+
+    dt_hours = (now - state["ts"]).total_seconds() / 3600.0
+    # Trous de données / horloges incohérentes : on n'extrapole pas au-delà
+    # de 30 min entre deux mesures.
+    if 0 < dt_hours <= 0.5:
+        state["total"] += max(0.0, float(rate_tph)) * dt_hours
+    state["ts"] = now
+    return round(state["total"], 3)
+
+
 def parse_dataplatform_payload(topic: str, raw: dict) -> list[dict]:
     topology = extract_topology(topic, raw)
     measurements = normalize_measurements(extract_measurements(raw))
@@ -806,6 +871,27 @@ def parse_dataplatform_payload(topic: str, raw: dict) -> list[dict]:
         numeric = safe_float(value)
         if numeric is None:
             continue
+        # alarm_trip n'est pas une mesure : c'est un événement de protection.
+        # → alarme EQUIPMENT_TRIP (dédupliquée), pas de série de données.
+        if str(key).lower() in {"alarm_trip", "trip_alarm", "protection_trip"}:
+            if numeric >= 1:
+                raise_local_alarm(
+                    meta, "EQUIPMENT_TRIP", "high",
+                    f"Protection trip detected on {meta['equipment']} (DataPlatform)",
+                    numeric, None,
+                )
+            continue
+        # Weigh Belt Scale = débit de PRODUCTION phosphate (t/h), pas un débit
+        # d'eau : série "Production Rate" (sert au SEC) + cumul en TONNES
+        # "Phosphate Production" (KPI principal, intégration du débit mesuré).
+        if key == "flow_rate":
+            equipment_lower = str(meta["equipment"]).lower()
+            if "weigh" in equipment_lower or "scale" in equipment_lower:
+                records.append({**meta, "energy_name": "Production Rate", "value": numeric, "unit": "t/h"})
+                tons = update_phosphate_total(meta, numeric)
+                if tons is not None and tons > 0:
+                    records.append({**meta, "energy_name": "Phosphate Production", "value": tons, "unit": "tonne"})
+                continue
         records.append({
             **meta,
             "energy_name": normalize_energy_name(key),

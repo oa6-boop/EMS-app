@@ -220,19 +220,30 @@ function buildLatestKpis(energies = []) {
     });
 }
 
-function SECCalculator({ selectedLineLabel, totalCo2Kg, cumulativeKwh }) {
-  const totalKwh = Number(cumulativeKwh || 0);
-  const co2Kg = Number(totalCo2Kg || 0);
-  const co2Tonnes = co2Kg / 1000;
-  const sec = co2Tonnes > 0 && totalKwh > 0 ? totalKwh / co2Tonnes : null;
+function SECCalculator({ selectedLineLabel, energies = [] }) {
+  // SEC industriel = énergie consommée PAR TONNE de phosphate produite.
+  // Calcul temps réel avec les débits de la DataPlatform :
+  //   kW ÷ (t/h) = kWh/t · vapeur (t/h) ÷ (t/h) = t/t · fuel (L/h) ÷ (t/h) = L/t
+  // La production vient des Weigh Belt Scales (série "Production Rate").
+  const lowerName = (e) => String(e.name || "").toLowerCase();
+  const sumBy = (predicate) =>
+    energies.filter(predicate).reduce((s, e) => s + Number(e.value || 0), 0);
 
-  const secColor = !sec
-    ? "#4299e1"
-    : sec < 500
-    ? "#38a169"
-    : sec < 1000
-    ? "#d69e2e"
-    : "#e53e3e";
+  const productionRate = sumBy((e) => lowerName(e) === "production rate"); // t/h
+  const totalKw        = sumBy((e) => e.unit === "kW");                    // kW
+  const steamFlow      = sumBy((e) => lowerName(e) === "steam flow");      // t/h
+  const fuelFlow       = sumBy((e) => lowerName(e) === "fuel flow");       // L/h
+  const waterFlow      = sumBy((e) => lowerName(e) === "flow rate");       // m³/h (eau)
+
+  const hasProduction = productionRate > 0;
+  const secPerEnergy = [
+    { label: "Electricity", value: hasProduction && totalKw   > 0 ? totalKw   / productionRate : null, unit: "kWh/t", color: "#4299e1", icon: "⚡" },
+    { label: "Steam",       value: hasProduction && steamFlow > 0 ? steamFlow / productionRate : null, unit: "t/t",   color: "#ed8936", icon: "♨️" },
+    { label: "Fuel",        value: hasProduction && fuelFlow  > 0 ? fuelFlow  / productionRate : null, unit: "L/t",   color: "#e53e3e", icon: "⛽" },
+    { label: "Water",       value: hasProduction && waterFlow > 0 ? waterFlow / productionRate : null, unit: "m³/t",  color: "#0891b2", icon: "💧" },
+  ];
+  const sec = secPerEnergy[0].value; // SEC électrique = indicateur principal
+  const secColor = "#4299e1";
 
   return (
     <div className="panel-card">
@@ -257,74 +268,29 @@ function SECCalculator({ selectedLineLabel, totalCo2Kg, cumulativeKwh }) {
         </span>
       </div>
 
-      <div className="carbon-kpis" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <div className="carbon-kpis" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
         <div className="carbon-card">
-          <h4>Total kWh</h4>
-          <strong style={{ color: "#4299e1" }}>
-            {totalKwh > 0 ? `${totalKwh.toFixed(2)} kWh` : "—"}
+          <h4>⛏️ Production</h4>
+          <strong style={{ color: "#16a34a" }}>
+            {hasProduction ? `${productionRate.toFixed(1)} t/h` : "—"}
           </strong>
-          <span>Cumulative energy</span>
+          <span>Phosphate — weigh belt scales</span>
         </div>
 
-        <div className="carbon-card">
-          <h4>CO₂ Production</h4>
-          <strong style={{ color: "#ed8936" }}>
-            {co2Tonnes > 0 ? `${co2Tonnes.toFixed(4)} t` : "—"}
-          </strong>
-          <span>{co2Kg > 0 ? `${co2Kg.toFixed(2)} kg` : "Waiting DataPlatform..."}</span>
-        </div>
-
-        <div className="carbon-card">
-          <h4>SEC</h4>
-          <strong style={{ color: secColor, fontSize: "1.3rem" }}>
-            {sec !== null ? sec.toFixed(1) : "—"}
-          </strong>
-          <span>kWh / tCO₂</span>
-        </div>
+        {secPerEnergy.map((s) => (
+          <div className="carbon-card" key={s.label}>
+            <h4>{s.icon} {s.label} SEC</h4>
+            <strong style={{ color: s.color, fontSize: "1.15rem" }}>
+              {s.value != null ? s.value.toFixed(2) : "—"}
+            </strong>
+            <span>{s.unit} of phosphate</span>
+          </div>
+        ))}
       </div>
 
-      {sec !== null && (
-        <div
-          style={{
-            marginTop: "0.75rem",
-            padding: "0.75rem 1rem",
-            background: sec < 500 ? "#f0fff4" : sec < 1000 ? "#fffbeb" : "#fff5f5",
-            border: `1px solid ${
-              sec < 500 ? "#c6f6d5" : sec < 1000 ? "#fbd38d" : "#fed7d7"
-            }`,
-            borderRadius: "8px",
-            fontSize: "0.83rem",
-            color: secColor,
-            fontWeight: 600,
-            display: "flex",
-            gap: "0.5rem",
-            alignItems: "center",
-          }}
-        >
-          <span style={{ fontSize: "1.1rem" }}>
-            {sec < 500 ? "✅" : sec < 1000 ? "⚠️" : "🔴"}
-          </span>
-
-          <div>
-            <span>
-              {sec < 500
-                ? "Excellent efficiency (< 500 kWh/tCO₂)"
-                : sec < 1000
-                ? "Acceptable — room for improvement"
-                : "Low efficiency — action required"}
-            </span>
-
-            <div style={{ fontSize: "0.78rem", color: "#6b7280", marginTop: "2px" }}>
-              {totalKwh.toFixed(2)} kWh ÷ {co2Tonnes.toFixed(4)} tCO₂ ={" "}
-              <strong style={{ color: secColor }}>{sec.toFixed(2)} kWh/t</strong>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {sec === null && (
+      {!hasProduction && (
         <div className="info-box" style={{ marginTop: "0.75rem" }}>
-          ⏳ Waiting for <strong>kWh</strong> and <strong>CO₂</strong> data from DataPlatform.
+          ⏳ Waiting for <strong>production data</strong> (weigh belt scales) from DataPlatform.
         </div>
       )}
     </div>
@@ -493,10 +459,11 @@ export default function Dashboard({
       .filter((e) => String(e.name || "").toLowerCase() === needle)
       .reduce((s, e) => s + Number(e.value || 0), 0);
 
-  const steamTotal     = sumByName("steam");            // tonnes (totalisateur)
-  const fuelTotal      = sumByName("fuel");             // litres (totalisateur)
-  const waterTotal     = sumByName("water");            // m³
-  const productionRate = sumByName("production rate");  // t/h (phosphate)
+  const steamTotal     = sumByName("steam");                 // tonnes (totalisateur)
+  const fuelTotal      = sumByName("fuel");                  // litres (totalisateur)
+  const waterTotal     = sumByName("water");                 // m³
+  const productionRate = sumByName("production rate");       // t/h (débit balances)
+  const phosphateTons  = sumByName("phosphate production");  // t (cumul produit)
 
   const co2Display = totalCo2 > 0 ? totalCo2 : cumulativeKwh > 0 ? cumulativeKwh * 0.718 : 0;
 
@@ -517,7 +484,7 @@ export default function Dashboard({
   // (Power Quality, Equipment Status, Real-Time Monitoring).
   const MAIN_KPI_NAMES = new Set([
     "electricity", "electricity-kwh", "co2-emissions", "sec",
-    "water", "steam", "fuel", "production rate",
+    "water", "steam", "fuel", "phosphate production",
   ]);
 
   // UNE entrée par énergie (agrégée sur tous les équipements de la ligne) —
@@ -744,7 +711,7 @@ export default function Dashboard({
               <div className="kpi-badge amber">Live</div>
               <h3>{steamTotal.toFixed(1)} t</h3>
               <p>Steam Consumed</p>
-              <span>Steam meter totalizer (Utilities)</span>
+              <span>Steam meter totalizer</span>
             </div>
           )}
 
@@ -754,7 +721,7 @@ export default function Dashboard({
               <div className="kpi-badge red">Live</div>
               <h3>{fuelTotal.toFixed(1)} L</h3>
               <p>Fuel Consumed</p>
-              <span>Fuel meter totalizer (Utilities)</span>
+              <span>Fuel meter totalizer </span>
             </div>
           )}
 
@@ -767,13 +734,16 @@ export default function Dashboard({
             <span>Flow meters + line total</span>
           </div>
 
-          {productionRate > 0 && (
+          {(phosphateTons > 0 || productionRate > 0) && (
             <div className="kpi-card">
               <div className="kpi-icon emerald">⛏️</div>
               <div className="kpi-badge green">Live</div>
-              <h3>{productionRate.toFixed(1)} t/h</h3>
-              <p>Production Rate</p>
-              <span>Phosphate — weigh belt scales</span>
+              <h3>{phosphateTons > 0 ? `${phosphateTons.toFixed(1)} t` : "—"}</h3>
+              <p>Phosphate Production</p>
+              <span>
+                Total produced (weigh belt scales)
+                {productionRate > 0 ? ` · now: ${productionRate.toFixed(0)} t/h` : ""}
+              </span>
             </div>
           )}
         </div>
@@ -783,7 +753,7 @@ export default function Dashboard({
         <div className="section-title-wrap">
           <h2>Key Energy KPIs</h2>
           <p>
-            Main energy indicators from DataPlatform — {selectedLineLabel}
+            Main energy indicators  — {selectedLineLabel}
             {allDataPlatformKpis.length === 0 && " — Waiting for data..."}
           </p>
         </div>
@@ -827,8 +797,7 @@ export default function Dashboard({
       <section className="section-block">
         <SECCalculator
           selectedLineLabel={selectedLineLabel}
-          totalCo2Kg={co2Display}
-          cumulativeKwh={cumulativeKwh}
+          energies={energies}
         />
       </section>
 

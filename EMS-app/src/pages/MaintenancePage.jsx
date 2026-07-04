@@ -202,9 +202,8 @@ export default function MaintenancePage({ energies = [], currentUser = null }) {
     <div className="overview-page">
       <div className="overview-header-row">
         <div>
-          <h1>Preventive Maintenance</h1>
+          <h1> Maintenance Page</h1>
           <p className="page-subtitle">
-            Schedule and track real equipment discovered from DataPlatform
           </p>
         </div>
         <button

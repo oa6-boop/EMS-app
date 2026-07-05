@@ -259,6 +259,39 @@ services:
     networks:
       - iot-net
 
+  # Soumet AUTOMATIQUEMENT le job Flink (raw_processor) à chaque démarrage :
+  # attend que le JobManager soit prêt, vérifie qu'aucun job ne tourne déjà
+  # (pas de doublon), puis lance le job. Aucune commande manuelle à taper.
+  flink-job-submitter:
+    image: flink-pyflink:1.18
+    container_name: flink-job-submitter
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+      flink-taskmanager:
+        condition: service_started
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./flink-jobs:/opt/flink/jobs
+    networks:
+      - iot-net
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Attente du JobManager..."
+        until (echo > /dev/tcp/flink-jobmanager/8081) 2>/dev/null; do sleep 3; done
+        sleep 10
+        if python3 -c "import urllib.request,json,sys; d=json.load(urllib.request.urlopen('http://flink-jobmanager:8081/jobs/overview')); sys.exit(0 if any(j.get('state')=='RUNNING' for j in d.get('jobs',[])) else 1)" 2>/dev/null; then
+          echo "Un job Flink tourne deja — rien a faire."
+        else
+          echo "Soumission du job raw_processor..."
+          flink run -m flink-jobmanager:8081 --python /opt/flink/jobs/raw_processor/main.py --pyFiles /opt/flink/jobs/raw_processor/ -d \
+            && echo "JOB FLINK SOUMIS AVEC SUCCES" \
+            || echo "ECHEC de soumission — voir les logs ci-dessus"
+        fi
+
 networks:
   iot-net:
     driver: bridge

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getCached, setCached } from "../utils/pageCache.js";
 import { fetchAggregatedHistory, fetchComparison, fetchStructure } from "../api/emsApi";
 import TagFilter from "../components/TagFilter.jsx";
 import { svgEventPoint, nearestIndex, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
@@ -183,9 +184,10 @@ export default function HistoricalData({
   const [period, setPeriod] = useState("day");
   const [energyType, setEnergyType] = useState(DEFAULT_ENERGY_TYPE);
   const [energyTypes, setEnergyTypes] = useState([DEFAULT_ENERGY_TYPE]);
-  const [histData, setHistData] = useState([]);
-  const [stats, setStats] = useState(null);
-  const [comparison, setComparison] = useState(null);
+  const [histData, setHistData] = useState(() => getCached("hd_data", []));
+  const [stats, setStats] = useState(() => getCached("hd_stats", null));
+  const [comparison, setComparison] = useState(() => getCached("hd_comp", null));
+  useEffect(() => { setCached("hd_data", histData); setCached("hd_stats", stats); setCached("hd_comp", comparison); }, [histData, stats, comparison]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 

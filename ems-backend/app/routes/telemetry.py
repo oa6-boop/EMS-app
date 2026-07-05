@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, distinct, func
 from sqlalchemy.orm import Session
@@ -21,19 +23,46 @@ def get_telemetry(limit: int = Query(default=100, ge=1, le=1000), db: Session = 
 
 @router.get("/telemetry/latest")
 def get_latest_summary(db: Session = Depends(get_db)):
-    records = db.query(TelemetryRecord).all()
+    # FIX FUITE MÉMOIRE : cette route est appelée toutes les 5 s par le
+    # frontend. Charger TOUTE la table (des centaines de milliers de lignes
+    # qui grossissent en continu) consommait plusieurs Go de RAM et
+    # ralentissait toute l'application. On ne charge que la fenêtre récente :
+    # la DataPlatform publie toutes les 2-10 s, 15 minutes suffisent largement.
+    cutoff = datetime.utcnow() - timedelta(minutes=15)
+    records = (
+        db.query(TelemetryRecord)
+        .filter(TelemetryRecord.timestamp >= cutoff)
+        .order_by(desc(TelemetryRecord.timestamp))
+        .limit(5000)
+        .all()
+    )
+    if not records:
+        # Plateforme à l'arrêt : on retombe sur les derniers relevés connus.
+        records = (
+            db.query(TelemetryRecord)
+            .order_by(desc(TelemetryRecord.timestamp))
+            .limit(2000)
+            .all()
+        )
     return build_dashboard_summary(records)
 
 
 @router.get("/telemetry/structure")
 def get_structure(db: Session = Depends(get_db)):
     """Découverte automatique: lignes, équipements, types d'énergie présents dans la DB."""
-    lines       = [r[0] for r in db.query(distinct(TelemetryRecord.production_line)).all() if r[0]]
-    equipment   = [r[0] for r in db.query(distinct(TelemetryRecord.equipment)).all()        if r[0]]
-    energy_types= [r[0] for r in db.query(distinct(TelemetryRecord.energy_name)).all()      if r[0]]
-    areas       = [r[0] for r in db.query(distinct(TelemetryRecord.area)).all()              if r[0]]
-    plants      = [r[0] for r in db.query(distinct(TelemetryRecord.plant)).all()             if r[0]]
-    raw_tags    = [r[0] for r in db.query(distinct(TelemetryRecord.tags)).all()              if r[0]]
+    # PERF : fenêtre 24 h (indexée) au lieu de scanner toute la table 6 fois —
+    # cette route est appelée en continu par le frontend.
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+
+    def recent(column):
+        return db.query(distinct(column)).filter(TelemetryRecord.timestamp >= cutoff)
+
+    lines       = [r[0] for r in recent(TelemetryRecord.production_line).all() if r[0]]
+    equipment   = [r[0] for r in recent(TelemetryRecord.equipment).all()        if r[0]]
+    energy_types= [r[0] for r in recent(TelemetryRecord.energy_name).all()      if r[0]]
+    areas       = [r[0] for r in recent(TelemetryRecord.area).all()              if r[0]]
+    plants      = [r[0] for r in recent(TelemetryRecord.plant).all()             if r[0]]
+    raw_tags    = [r[0] for r in recent(TelemetryRecord.tags).all()              if r[0]]
     tags = sorted({t.strip() for row in raw_tags for t in str(row).split(",") if t.strip()})
     return {
         "lines": sorted(lines), "equipment": sorted(equipment),
@@ -45,6 +74,7 @@ def get_structure(db: Session = Depends(get_db)):
 @router.get("/telemetry/equipment-list")
 def get_equipment_list(db: Session = Depends(get_db)):
     """Liste dynamique des équipements découverts depuis la DataPlatform."""
+    cutoff = datetime.utcnow() - timedelta(hours=24)
     rows = (
         db.query(
             TelemetryRecord.plant,
@@ -54,6 +84,7 @@ def get_equipment_list(db: Session = Depends(get_db)):
             TelemetryRecord.tags,
             func.max(TelemetryRecord.timestamp).label("last_seen"),
         )
+        .filter(TelemetryRecord.timestamp >= cutoff)
         .group_by(
             TelemetryRecord.plant,
             TelemetryRecord.production_line,

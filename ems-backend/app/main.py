@@ -1,5 +1,8 @@
 import os
 import asyncio
+import threading
+import time
+from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from fastapi import FastAPI
@@ -293,6 +296,44 @@ def normalize_legacy_units():
         db.close()
 
 
+def purge_old_records():
+    """
+    RÉTENTION : la DataPlatform publie ~10-20 mesures/seconde → sans purge,
+    la table telemetry_records dépasse le million de lignes en un jour, la
+    RAM explose et toutes les requêtes ralentissent. On garde :
+      - 48 h de télémétrie temps réel (largement assez pour les pages live)
+      - 7 jours d'historique agrégé (pages Historical Data / Reports)
+    """
+    db: Session = SessionLocal()
+    try:
+        cutoff_telemetry = datetime.utcnow() - timedelta(hours=48)
+        cutoff_history = datetime.utcnow() - timedelta(days=7)
+        removed_t = db.query(TelemetryRecord).filter(
+            TelemetryRecord.timestamp < cutoff_telemetry
+        ).delete(synchronize_session=False)
+        removed_h = db.query(EnergyHistory).filter(
+            EnergyHistory.timestamp < cutoff_history
+        ).delete(synchronize_session=False)
+        db.commit()
+        if removed_t or removed_h:
+            print(f"🧹 Retention purge: {removed_t} telemetry + {removed_h} history rows removed")
+    except Exception as exc:
+        db.rollback()
+        print(f"Retention purge warning: {exc}")
+    finally:
+        db.close()
+
+
+def start_purge_scheduler():
+    """Purge de rétention toutes les 30 minutes, en tâche de fond."""
+    def loop():
+        while True:
+            time.sleep(1800)
+            purge_old_records()
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
 @app.on_event("startup")
 async def startup_event():
     """
@@ -322,8 +363,10 @@ async def startup_event():
         create_default_admin()
         initialize_default_energy_rates()
         clean_simulator_data()
+        purge_old_records()
         normalize_legacy_hierarchy()
         normalize_legacy_units()
+        start_purge_scheduler()
 
         try:
             mqtt_client = start_mqtt()

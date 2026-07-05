@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getCached, setCached } from "../utils/pageCache.js";
 import { fetchChartData } from "../api/emsApi";
 import { svgEventPoint, nearestIndex, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
@@ -177,8 +178,9 @@ export default function RealTimeMonitoring({
   energies            = [],
   selectedLineLabel   = "Production Line 1",
 }) {
-  const [chartData,     setChartData]     = useState(null);
-  const [loadingCharts, setLoadingCharts] = useState(true);
+  const [chartData,     setChartData]     = useState(() => getCached("rtm_chart", null));
+  useEffect(() => { setCached("rtm_chart", chartData); }, [chartData]);
+  const [loadingCharts, setLoadingCharts] = useState(() => !getCached("rtm_chart", null));
 
   useEffect(() => {
     const load = async () => {

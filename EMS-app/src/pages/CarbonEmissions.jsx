@@ -210,7 +210,7 @@ export default function CarbonEmissions({ energies = [], carbonHistory = [], tot
           <div className="panel-head">
             <div><h2>Reduction Target</h2><p>Monthly CO₂ performance</p></div>
           </div>
-          <div className="progress-circle">{progressPct != null ? `${progressPct}%` : "—"}</div>
+          <div className="progress-circle" style={{ color: achieved == null ? "var(--text-main)" : achieved >= 0 ? "#16a34a" : "#d97706" }}>{achieved != null ? `${achieved >= 0 ? "-" : "+"}${Math.abs(achieved).toFixed(1)}%` : "—"}</div>
           <div className="target-metrics">
             <div><span>Monthly Target</span><strong>-{TARGET_PCT}% CO₂ reduction</strong></div>
             <div>

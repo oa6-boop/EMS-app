@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getCached, setCached } from "../utils/pageCache.js";
 import TagFilter from "../components/TagFilter.jsx";
 import { fetchIndustryAlarms, fetchIndustryKpis, resolveAlarm } from "../api/industryApi";
 import { fetchAllLinesSummary, fetchStructure } from "../api/emsApi";
@@ -106,9 +107,11 @@ export default function IndustryOverview({
   selectedTag = "",
   onTagSelect,
 }) {
-  const [kpis, setKpis] = useState(null);
-  const [alarms, setAlarms] = useState([]);
-  const [linesSummary, setLinesSummary] = useState({});
+  const [kpis, setKpis] = useState(() => getCached("io_kpis", null));
+  const [alarms, setAlarms] = useState(() => getCached("io_alarms", []));
+  const [linesSummary, setLinesSummary] = useState(() => getCached("io_summary", {}));
+  // Cache navigation : la page se rouvre avec ses dernieres donnees
+  useEffect(() => { setCached("io_kpis", kpis); setCached("io_alarms", alarms); setCached("io_summary", linesSummary); }, [kpis, alarms, linesSummary]);
   const [structure, setStructure] = useState({
     lines: [],
     zones: [],

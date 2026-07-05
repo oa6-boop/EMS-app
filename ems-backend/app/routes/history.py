@@ -84,10 +84,13 @@ def get_aggregated_history(
     }
     start = ranges[period]
 
+    # PERF : plafonné à 2000 points (les plus récents de la période) —
+    # charger des centaines de milliers de lignes gelait la page et le réseau.
     records = filtered_query(
         db, line_name, energy_name, start,
         plant=plant, zone=zone, equipment=equipment, tag=tag,
-    ).order_by(TelemetryRecord.timestamp).all()
+    ).order_by(desc(TelemetryRecord.timestamp)).limit(2000).all()
+    records.reverse()
 
     if not records:
         return {
@@ -147,15 +150,20 @@ def get_comparison(
     yesterday_end   = now - timedelta(hours=24)
 
     def get_records(start, end):
-        return (
+        # PERF : 1500 points max par fenêtre de 24 h — suffisant pour les
+        # graphes, et évite de transférer des mégaoctets à chaque affichage.
+        rows = (
             filtered_query(
                 db, line_name, energy_name, start,
                 plant=plant, zone=zone, equipment=equipment, tag=tag,
             )
             .filter(TelemetryRecord.timestamp < end)
-            .order_by(TelemetryRecord.timestamp)
+            .order_by(desc(TelemetryRecord.timestamp))
+            .limit(1500)
             .all()
         )
+        rows.reverse()
+        return rows
 
     today_records     = get_records(today_start,     now)
     yesterday_records = get_records(yesterday_start, yesterday_end)

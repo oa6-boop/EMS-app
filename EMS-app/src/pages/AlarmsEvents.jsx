@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getCached, setCached } from "../utils/pageCache.js";
 import { fetchIndustryAlarms, resolveAlarm } from "../api/industryApi";
 import TagFilter from "../components/TagFilter.jsx";
 
@@ -28,8 +29,9 @@ export default function AlarmsEvents({
   selectedTag = "",
   onTagSelect,
 }) {
-  const [alarms,   setAlarms]   = useState([]);
-  const [loading,  setLoading]  = useState(true);
+  const [alarms,   setAlarms]   = useState(() => getCached("ae_alarms", []));
+  useEffect(() => { setCached("ae_alarms", alarms); }, [alarms]);
+  const [loading,  setLoading]  = useState(() => getCached("ae_alarms", []).length === 0);
   const [filter,   setFilter]   = useState("all");
   const [error,    setError]    = useState("");
 

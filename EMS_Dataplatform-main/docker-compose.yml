@@ -135,7 +135,7 @@ services:
       - KAFKA_BROKER=kafka:9092
       - |
         FLINK_PROPERTIES= jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 2
+        taskmanager.numberOfTaskSlots: 6
         parallelism.default: 2
     networks:
       - iot-net
@@ -168,17 +168,18 @@ services:
       
     networks:
       - iot-net
-      
+
   # ══════════════════════════════════════════════════════════════════════════
-  # APPLICATION EMS (partie développée par Ahmed) — AJOUT uniquement :
-  # les services de la DataPlatform ci-dessus sont inchangés.
+  # APPLICATION EMS (partie développée par Ahmed) — AJOUT uniquement.
+  # Les services de la DataPlatform ci-dessus sont INCHANGÉS.
+  # Les jobs Flink sont lancés MANUELLEMENT (pas de submitter automatique).
   # ══════════════════════════════════════════════════════════════════════════
   postgres:
     image: postgres:15-alpine
     container_name: ems-postgres
     restart: unless-stopped
     ports:
-      - "5434:5432"   # 5434 côté PC : le 5432 est pris par timescaledb
+      - "5434:5432"     
     environment:
       POSTGRES_DB: "ems_app_db"
       POSTGRES_USER: "ems_app_user"
@@ -221,21 +222,16 @@ services:
       APP_NAME: "EMS Backend API"
       APP_HOST: "0.0.0.0"
       APP_PORT: "8000"
-
       DATABASE_URL: "postgresql://ems_app_user:ems_app_password@postgres:5432/ems_app_db"
-
       DATAPLATFORM_TIMESCALE_URL: "postgresql://ems_user:ems_password@timescaledb:5432/ems_db"
-
       MQTT_BROKER: "mqtt-broker"
       MQTT_PORT: "1883"
       MQTT_TOPIC: "#"
-
       KAFKA_BROKER: "kafka:9092"
       KAFKA_ALERT_TOPIC: "ems.alerts"
-
       SECRET_KEY: "ems_jesa_secret_key_2026"
       ALGORITHM: "HS256"
-      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "720"
     depends_on:
       postgres:
         condition: service_healthy
@@ -258,39 +254,6 @@ services:
         condition: service_started
     networks:
       - iot-net
-
-  # Soumet AUTOMATIQUEMENT le job Flink (raw_processor) à chaque démarrage :
-  # attend que le JobManager soit prêt, vérifie qu'aucun job ne tourne déjà
-  # (pas de doublon), puis lance le job. Aucune commande manuelle à taper.
-  flink-job-submitter:
-    image: flink-pyflink:1.18
-    container_name: flink-job-submitter
-    depends_on:
-      flink-jobmanager:
-        condition: service_started
-      flink-taskmanager:
-        condition: service_started
-      timescaledb:
-        condition: service_healthy
-    volumes:
-      - ./flink-jobs:/opt/flink/jobs
-    networks:
-      - iot-net
-    restart: "no"
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        echo "Attente du JobManager..."
-        until (echo > /dev/tcp/flink-jobmanager/8081) 2>/dev/null; do sleep 3; done
-        sleep 10
-        if python3 -c "import urllib.request,json,sys; d=json.load(urllib.request.urlopen('http://flink-jobmanager:8081/jobs/overview')); sys.exit(0 if any(j.get('state')=='RUNNING' for j in d.get('jobs',[])) else 1)" 2>/dev/null; then
-          echo "Un job Flink tourne deja — rien a faire."
-        else
-          echo "Soumission du job raw_processor..."
-          flink run -m flink-jobmanager:8081 --python /opt/flink/jobs/raw_processor/main.py --pyFiles /opt/flink/jobs/raw_processor/ -d \
-            && echo "JOB FLINK SOUMIS AVEC SUCCES" \
-            || echo "ECHEC de soumission — voir les logs ci-dessus"
-        fi
 
 networks:
   iot-net:

@@ -89,7 +89,7 @@ export default function Sidebar({
   return (
     <div className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
       <div className="sidebar-top">
-        {sidebarOpen && <h2>EMS</h2>}
+        {sidebarOpen && <h2 style={{ fontSize: "1.05rem", lineHeight: 1.15 }}>EMS<br/><span style={{ fontSize: "0.72rem", fontWeight: 600, opacity: 0.75 }}>Al Youssoufia</span></h2>}
         <button className="sidebar-toggle-btn"
           onClick={() => setSidebarOpen(prev => !prev)} type="button">
           {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}

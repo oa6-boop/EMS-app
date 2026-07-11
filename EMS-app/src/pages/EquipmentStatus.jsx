@@ -1,4 +1,5 @@
 import TagFilter from "../components/TagFilter.jsx";
+import EquipmentHoverChart from "../components/EquipmentHoverChart.jsx";
 
 const MAX_KW_PER_METER = 10;
 const RUNNING_THRESHOLD = 1;
@@ -29,6 +30,7 @@ export default function EquipmentStatus({
         voltage: energy.rawData?.voltage,
         power_factor: energy.rawData?.power_factor,
         frequency: energy.rawData?.frequency,
+        primary: null,   // mesure principale des appareils de procédé (non électriques)
       };
     }
 
@@ -54,21 +56,53 @@ export default function EquipmentStatus({
     if ((energy.name || "").toLowerCase().includes("breaker")) {
       equipmentMap[eqName].breaker = Number(energy.value);
     }
+
+    // Appareils de procédé (débitmètres, balances, compteur vapeur…) :
+    // on retient leur mesure principale (1re mesure non-électrique / non-technique)
+    // pour ne PAS afficher "—".
+    const nm = String(energy.name || "").toLowerCase();
+    const isTechnical = /voltage|current|frequency|power factor|thd|breaker|co2|co₂|reactive|apparent|\bsec\b|specific energy/.test(nm);
+    if (
+      energy.unit !== "kW" && energy.unit !== "kWh" && !isTechnical &&
+      !equipmentMap[eqName].primary && energy.value != null && energy.value !== ""
+    ) {
+      equipmentMap[eqName].primary = { name: energy.name, value: Number(energy.value || 0), unit: energy.unit };
+    }
   });
 
-  const equipments = Object.values(equipmentMap);
+  // Les rollups de zone/ligne (Extraction, Washing, Utilities, Storage Handling,
+  // Flotation, Total…) ne sont PAS des équipements physiques — juste un compteur
+  // kWh de zone. On les retire des cartes ET du tableau.
+  const isZoneAggregate = (eq) => {
+    const name = String(eq.name || "").trim().toLowerCase();
+    const area = String(eq.area || "").trim().toLowerCase();
+    // Rollup de ZONE (l'équipement porte le nom de sa zone) ou de LIGNE
+    // (zone « Line Total » : Total / Total water consumption). Ce ne sont PAS
+    // des équipements physiques, quel que soit leur contenu (kW, débit, kWh).
+    return area === "line total" || name === area;
+  };
 
-  // Le breaker (DataPlatform) prime : disjoncteur ouvert = équipement hors tension
-  const getStatus = (kw, breaker) =>
+  const equipments = Object.values(equipmentMap).filter((eq) => !isZoneAggregate(eq));
+
+  // Le breaker (DataPlatform) prime : disjoncteur ouvert = équipement hors tension.
+  // Statut selon la donnée disponible : kW (électrique) → Running/Standby/Off ;
+  // mesure de procédé → Active/Idle ; compteur d'énergie (kWh seul) → Metering.
+  const getStatus = (kw, breaker, primary, kwh) =>
     breaker === 0
       ? { label: "Breaker Open", cls: "", color: "#e53e3e" }
-      : kw == null
-      ? { label: "Unknown", cls: "", color: "#888" }
-      : kw > RUNNING_THRESHOLD
-      ? { label: "Running", cls: "running", color: "#38a169" }
-      : kw > STANDBY_THRESHOLD
-      ? { label: "Standby", cls: "", color: "#d69e2e" }
-      : { label: "Off", cls: "", color: "#e53e3e" };
+      : kw != null
+      ? (kw > RUNNING_THRESHOLD
+          ? { label: "Running", cls: "running", color: "#38a169" }
+          : kw > STANDBY_THRESHOLD
+          ? { label: "Standby", cls: "", color: "#d69e2e" }
+          : { label: "Off", cls: "", color: "#e53e3e" })
+      : primary
+      ? (primary.value > 0
+          ? { label: "Active", cls: "running", color: "#38a169" }
+          : { label: "Idle", cls: "", color: "#d69e2e" })
+      : kwh != null
+      ? { label: "Metering", cls: "running", color: "#38a169" }
+      : { label: "Unknown", cls: "", color: "#888" };
 
   const getLoad = (kw) =>
     kw != null ? Math.min(100, Math.round((kw / MAX_KW_PER_METER) * 100)) : 0;
@@ -142,11 +176,19 @@ export default function EquipmentStatus({
         <div className="equipment-grid">
           {equipments.length > 0 ? (
             equipments.map((eq) => {
-              const status = getStatus(eq.kw, eq.breaker);
+              const isProcess = eq.kw == null && eq.primary;
+              const isMeter = eq.kw == null && !eq.primary && eq.kwh != null;
+              const status = getStatus(eq.kw, eq.breaker, eq.primary, eq.kwh);
               const load = getLoad(eq.kw);
 
               return (
-                <div className="equipment-card" key={eq.name}>
+                // Survol : mini-courbe de consommation réelle de l'équipement
+                <EquipmentHoverChart
+                  key={eq.name}
+                  line={selectedLineLabel}
+                  equipment={eq.name}
+                >
+                <div className="equipment-card">
                   <div className="equipment-top">
                     <div>
                       <small>{eq.area}</small>
@@ -186,26 +228,39 @@ export default function EquipmentStatus({
                   </div>
 
                   <div className="equipment-meta">
-                    {eq.kw != null && `⚡ ${eq.kw.toFixed(1)} kW`}
-                    {eq.voltage != null && ` · ${Number(eq.voltage).toFixed(0)} V`}
-                    {eq.power_factor != null &&
-                      ` · PF ${Number(eq.power_factor).toFixed(2)}`}
+                    {eq.kw != null ? (
+                      <>
+                        ⚡ {eq.kw.toFixed(1)} kW
+                        {eq.voltage != null && ` · ${Number(eq.voltage).toFixed(0)} V`}
+                        {eq.power_factor != null && ` · PF ${Number(eq.power_factor).toFixed(2)}`}
+                      </>
+                    ) : isProcess ? (
+                      <>📊 {eq.primary.value.toFixed(1)} {eq.primary.unit} · <span style={{ color: "var(--text-secondary)" }}>{eq.primary.name}</span></>
+                    ) : isMeter ? (
+                      <>⚡ {eq.kwh.toFixed(1)} kWh · <span style={{ color: "var(--text-secondary)" }}>Energy counter</span></>
+                    ) : (
+                      "—"
+                    )}
                   </div>
 
-                  <div className="equipment-load-row">
-                    <span>Load</span>
-                    <strong>{load}%</strong>
-                  </div>
-
-                  <div className={`progress-line ${getLoadColor(load)}`}>
-                    <div style={{ width: `${load}%`, transition: "width 0.5s" }} />
-                  </div>
+                  {!isProcess && !isMeter && (
+                    <>
+                      <div className="equipment-load-row">
+                        <span>Load</span>
+                        <strong>{load}%</strong>
+                      </div>
+                      <div className={`progress-line ${getLoadColor(load)}`}>
+                        <div style={{ width: `${load}%`, transition: "width 0.5s" }} />
+                      </div>
+                    </>
+                  )}
 
                   <div className="equipment-footer">
                     {eq.unit_name} · {eq.plant}
                     {eq.kwh != null && ` · ${eq.kwh.toFixed(1)} kWh`}
                   </div>
                 </div>
+                </EquipmentHoverChart>
               );
             })
           ) : (
@@ -252,7 +307,7 @@ export default function EquipmentStatus({
             <tbody>
               {equipments.length > 0 ? (
                 equipments.map((eq) => {
-                  const status = getStatus(eq.kw, eq.breaker);
+                  const status = getStatus(eq.kw, eq.breaker, eq.primary, eq.kwh);
                   const load = getLoad(eq.kw);
 
                   return (

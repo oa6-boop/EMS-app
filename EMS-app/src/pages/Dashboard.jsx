@@ -1,4 +1,6 @@
 import TagFilter from "../components/TagFilter.jsx";
+import EquipmentHoverChart from "../components/EquipmentHoverChart.jsx";
+import { isAggregateRollup, groupByEquipment } from "../utils/energyAggregation.js";
 
 const toMAD = (mad) => `${Number(mad || 0).toFixed(2)} MAD`;
 
@@ -452,12 +454,22 @@ export default function Dashboard({
     .filter((e) => e.unit === "kW")
     .reduce((s, e) => s + Number(e.value || 0), 0);
 
+  // Mesures physiques (sans rollups zone/ligne) — évite le DOUBLE COMPTAGE :
+  // le rollup « Total » contient déjà la somme des équipements. Si une énergie
+  // n'existe QUE sur un rollup (aucun équipement ne la publie), on garde le
+  // rollup en secours pour ne pas perdre le KPI.
+  const physicalEnergiesList = energies.filter((e) => !isAggregateRollup(e));
+
   // Totaux par énergie (somme sur les équipements de la ligne) — cartes
   // principales : vapeur, fuel, eau et production (phosphate).
-  const sumByName = (needle) =>
-    energies
+  const sumIn = (list, needle) =>
+    list
       .filter((e) => String(e.name || "").toLowerCase() === needle)
       .reduce((s, e) => s + Number(e.value || 0), 0);
+  const sumByName = (needle) => {
+    const real = sumIn(physicalEnergiesList, needle);
+    return real > 0 ? real : sumIn(energies, needle);
+  };
 
   const steamTotal     = sumByName("steam");                 // tonnes (totalisateur)
   const fuelTotal      = sumByName("fuel");                  // litres (totalisateur)
@@ -472,9 +484,14 @@ export default function Dashboard({
   const RUNNING_THRESHOLD = 1;
   const STANDBY_THRESHOLD = 0.1;
 
-  const realCost = energies
+  // Coût réel : équipements physiques seulement (le rollup « Total » porte
+  // déjà le coût agrégé → l'inclure doublerait le KPI).
+  const physCost = physicalEnergiesList
     .filter((e) => !isCO2(e.name))
     .reduce((s, e) => s + Number(e.cost || 0), 0);
+  const realCost = physCost > 0
+    ? physCost
+    : energies.filter((e) => !isCO2(e.name)).reduce((s, e) => s + Number(e.cost || 0), 0);
 
   const displayCost = totalCost > 0 ? totalCost : realCost;
 
@@ -490,7 +507,18 @@ export default function Dashboard({
   // UNE entrée par énergie (agrégée sur tous les équipements de la ligne) —
   // utilisée par toutes les sections "par énergie" du Dashboard pour rester
   // lisible : plus de doublons Electricity ×7 ni de mesures techniques.
-  const aggregatedKpis = buildLatestKpis(energies);
+  // Source = équipements physiques ; un rollup n'est gardé que si son énergie
+  // n'existe sur aucun équipement (sinon double comptage).
+  const physicalNames = new Set(
+    physicalEnergiesList.map((e) => String(e.name || "").toLowerCase())
+  );
+  const kpiSource = [
+    ...physicalEnergiesList,
+    ...energies.filter(
+      (e) => isAggregateRollup(e) && !physicalNames.has(String(e.name || "").toLowerCase())
+    ),
+  ];
+  const aggregatedKpis = buildLatestKpis(kpiSource);
 
   const allDataPlatformKpis = aggregatedKpis.filter(
     (e) => MAIN_KPI_NAMES.has(String(e.name || "").toLowerCase())
@@ -529,6 +557,7 @@ export default function Dashboard({
           kwh: null,
           voltage: e.voltage,
           power_factor: e.power_factor,
+          primary: null,   // mesure principale des appareils de procédé (non électriques)
         };
       }
 
@@ -542,13 +571,38 @@ export default function Dashboard({
       if (e.unit === "kWh") {
         eqMap[e.equipment].kwh = Number(e.value || 0);
       }
+
+      // Appareils de procédé (débitmètres, balances, compteur vapeur…) :
+      // on retient leur mesure principale (1re mesure non-électrique / non-technique)
+      // pour ne PAS afficher "—".
+      const nm = String(e.name || "").toLowerCase();
+      const isTechnical = /voltage|current|frequency|power factor|thd|breaker|co2|co₂|reactive|apparent|\bsec\b|specific energy/.test(nm);
+      if (
+        e.unit !== "kW" && e.unit !== "kWh" && !isTechnical &&
+        !eqMap[e.equipment].primary && e.value != null && e.value !== ""
+      ) {
+        eqMap[e.equipment].primary = { name: e.name, value: Number(e.value || 0), unit: e.unit };
+      }
     });
 
     Object.values(eqMap).forEach((eq) => allEquipments.push(eq));
   });
 
-  const lineEquipments = allEquipments.filter((eq) => eq.line === selectedLineLabel);
-  const displayEquipments = lineEquipments.length > 0 ? lineEquipments : allEquipments.slice(0, 8);
+  // Les rollups de zone/ligne (Extraction, Washing, Utilities, Storage Handling,
+  // Flotation, Total…) ne sont PAS des équipements physiques — juste un compteur
+  // kWh de zone. On les retire des cartes.
+  const isZoneAggregate = (eq) => {
+    const name = String(eq.name || "").trim().toLowerCase();
+    const area = String(eq.area || "").trim().toLowerCase();
+    // Rollup de ZONE (l'équipement porte le nom de sa zone) ou de LIGNE
+    // (zone « Line Total » : Total / Total water consumption). Ce ne sont PAS
+    // des équipements physiques, quel que soit leur contenu (kW, débit, kWh).
+    return area === "line total" || name === area;
+  };
+  const physicalEquipments = allEquipments.filter((eq) => !isZoneAggregate(eq));
+
+  const lineEquipments = physicalEquipments.filter((eq) => eq.line === selectedLineLabel);
+  const displayEquipments = lineEquipments.length > 0 ? lineEquipments : physicalEquipments.slice(0, 8);
 
   const getStatus = (kw) =>
     kw == null
@@ -693,7 +747,6 @@ export default function Dashboard({
             <div className="kpi-badge red">Live</div>
             <h3>{toMAD(displayCost)}</h3>
             <p>Operating Cost</p>
-            <span>All billable energies — electricity, steam, fuel, water</span>
           </div>
 
           <div className="kpi-card">
@@ -741,7 +794,6 @@ export default function Dashboard({
               <h3>{phosphateTons > 0 ? `${phosphateTons.toFixed(1)} t` : "—"}</h3>
               <p>Phosphate Production</p>
               <span>
-                Total produced (weigh belt scales)
                 {productionRate > 0 ? ` · now: ${productionRate.toFixed(0)} t/h` : ""}
               </span>
             </div>
@@ -820,11 +872,25 @@ export default function Dashboard({
         <div className="equipment-grid">
           {displayEquipments.length > 0 ? (
             displayEquipments.map((eq) => {
-              const status = getStatus(eq.kw);
+              const isProcess = eq.kw == null && eq.primary;
+              const isMeter = eq.kw == null && !eq.primary && eq.kwh != null;
+              const status = isProcess
+                ? (eq.primary.value > 0
+                    ? { label: "Active", cls: "running", color: "#38a169" }
+                    : { label: "Idle", cls: "", color: "#d69e2e" })
+                : isMeter
+                ? { label: "Metering", cls: "running", color: "#38a169" }
+                : getStatus(eq.kw);
               const load = getLoad(eq.kw);
 
               return (
-                <div className="equipment-card" key={`${eq.line}-${eq.name}`}>
+                // Survol : mini-courbe de consommation réelle de l'équipement
+                <EquipmentHoverChart
+                  key={`${eq.line}-${eq.name}`}
+                  line={eq.line || selectedLineLabel}
+                  equipment={eq.name}
+                >
+                <div className="equipment-card">
                   <div className="equipment-top">
                     <div>
                       <small>{eq.area || eq.line}</small>
@@ -837,25 +903,39 @@ export default function Dashboard({
                   </div>
 
                   <div className="equipment-meta">
-                    ⚡ {eq.kw != null ? `${eq.kw.toFixed(1)} kW` : "—"}
-                    {eq.voltage != null && ` · ${Number(eq.voltage).toFixed(0)} V`}
-                    {eq.power_factor != null && ` · PF ${Number(eq.power_factor).toFixed(2)}`}
+                    {eq.kw != null ? (
+                      <>
+                        ⚡ {eq.kw.toFixed(1)} kW
+                        {eq.voltage != null && ` · ${Number(eq.voltage).toFixed(0)} V`}
+                        {eq.power_factor != null && ` · PF ${Number(eq.power_factor).toFixed(2)}`}
+                      </>
+                    ) : isProcess ? (
+                      <>📊 {eq.primary.value.toFixed(1)} {eq.primary.unit} · <span style={{ color: "var(--text-secondary)" }}>{eq.primary.name}</span></>
+                    ) : isMeter ? (
+                      <>⚡ {eq.kwh.toFixed(1)} kWh · <span style={{ color: "var(--text-secondary)" }}>Energy counter</span></>
+                    ) : (
+                      "—"
+                    )}
                   </div>
 
-                  <div className="equipment-load-row">
-                    <span>Load</span>
-                    <strong>{load}%</strong>
-                  </div>
-
-                  <div className={`progress-line ${getLoadColor(load)}`}>
-                    <div style={{ width: `${load}%`, transition: "width 0.5s" }} />
-                  </div>
+                  {!isProcess && !isMeter && (
+                    <>
+                      <div className="equipment-load-row">
+                        <span>Load</span>
+                        <strong>{load}%</strong>
+                      </div>
+                      <div className={`progress-line ${getLoadColor(load)}`}>
+                        <div style={{ width: `${load}%`, transition: "width 0.5s" }} />
+                      </div>
+                    </>
+                  )}
 
                   <div className="equipment-footer">
                     {eq.unit_name || "—"} · {eq.plant || "Plant 1"}
                     {eq.kwh != null && ` · ${eq.kwh.toFixed(1)} kWh`}
                   </div>
                 </div>
+                </EquipmentHoverChart>
               );
             })
           ) : (
@@ -939,7 +1019,7 @@ export default function Dashboard({
       <section className="section-block">
         <div className="section-title-wrap">
           <h2>Detailed Energy Data</h2>
-          <p>All measurements for {selectedLineLabel}</p>
+          <p>One row per equipment — {selectedLineLabel}</p>
         </div>
 
         <div className="table-card">
@@ -947,10 +1027,10 @@ export default function Dashboard({
             <thead>
               <tr>
                 <th>Equipment</th>
-                <th>Area</th>
-                <th>Energy Type</th>
-                <th>Value</th>
-                <th>Unit</th>
+                <th>Zone</th>
+                <th>Power (kW)</th>
+                <th>Energy (kWh)</th>
+                <th>Main Measure</th>
                 <th>Voltage</th>
                 <th>Power Factor</th>
                 <th>Cost (MAD)</th>
@@ -961,55 +1041,55 @@ export default function Dashboard({
             </thead>
 
             <tbody>
+              {/* UNE ligne par équipement physique : coût/CO₂ = somme de
+                  toutes ses mesures facturables (eau, fuel, vapeur incluses) */}
               {energies.length > 0 ? (
-                energies.map((e) => {
-                  const ratio = (e.value / (e.max || 500)) * 100;
-                  const status = ratio >= 85 ? "High" : ratio <= 10 ? "Low" : "Normal";
-                  const sc = { High: "#e53e3e", Low: "#888", Normal: "#38a169" }[status];
+                groupByEquipment(energies).map((eq) => {
+                  const st =
+                    eq.kw != null
+                      ? eq.kw > 1
+                        ? { label: "Running", color: "#38a169" }
+                        : eq.kw > 0.1
+                        ? { label: "Standby", color: "#d69e2e" }
+                        : { label: "Off", color: "#e53e3e" }
+                      : eq.primary
+                      ? eq.primary.value > 0
+                        ? { label: "Active", color: "#38a169" }
+                        : { label: "Idle", color: "#d69e2e" }
+                      : eq.kwh != null
+                      ? { label: "Metering", color: "#38a169" }
+                      : { label: "Unknown", color: "#888" };
 
                   return (
-                    <tr key={e.id}>
+                    <tr key={eq.name}>
+                      <td><strong>{eq.name}</strong></td>
+                      <td>{eq.area}</td>
+                      <td>{eq.kw != null ? eq.kw.toFixed(2) : "—"}</td>
+                      <td>{eq.kwh != null ? eq.kwh.toFixed(2) : "—"}</td>
                       <td>
-                        <strong>{e.rawData?.equipment || "—"}</strong>
+                        {eq.primary
+                          ? `${eq.primary.value.toFixed(1)} ${eq.primary.unit} · ${eq.primary.name}`
+                          : "—"}
                       </td>
-                      <td>{e.rawData?.area || "—"}</td>
-                      <td>{e.name}</td>
                       <td>
-                        <strong>{e.value.toFixed(2)}</strong>
-                      </td>
-                      <td>{e.unit}</td>
-                      <td>
-                        {e.rawData?.voltage != null ? (
-                          <span
-                            style={{
-                              color: Number(e.rawData.voltage) >= 210 ? "#38a169" : "#e53e3e",
-                            }}
-                          >
-                            {Number(e.rawData.voltage).toFixed(1)} V
+                        {eq.voltage != null ? (
+                          <span style={{ color: eq.voltage >= 210 ? "#38a169" : "#e53e3e" }}>
+                            {eq.voltage.toFixed(1)} V
                           </span>
                         ) : (
                           "—"
                         )}
                       </td>
-                      <td>
-                        {e.rawData?.power_factor != null
-                          ? Number(e.rawData.power_factor).toFixed(3)
-                          : "—"}
+                      <td>{eq.power_factor != null ? eq.power_factor.toFixed(3) : "—"}</td>
+                      <td style={{ color: "#d69e2e", fontWeight: 600 }}>
+                        {toMAD(eq.cost || 0)}
                       </td>
-                      <td
-                        style={{
-                          color: isCO2(e.name) ? "#94a3b8" : "#d69e2e",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {isCO2(e.name) ? "—" : toMAD(e.cost || 0)}
-                      </td>
-                      <td style={{ color: "#38a169" }}>{Number(e.co2_kg || 0).toFixed(3)}</td>
+                      <td style={{ color: "#38a169" }}>{Number(eq.co2 || 0).toFixed(3)}</td>
                       <td>
-                        <span style={{ color: sc }}>{status}</span>
+                        <span style={{ color: st.color }}><strong>{st.label}</strong></span>
                       </td>
                       <td style={{ fontSize: "0.8rem", color: "#888" }}>
-                        {e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : "—"}
+                        {eq.timestamp ? new Date(eq.timestamp).toLocaleTimeString() : "—"}
                       </td>
                     </tr>
                   );

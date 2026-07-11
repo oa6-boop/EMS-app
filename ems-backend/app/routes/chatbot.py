@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from app.core.deps import get_current_active_user
 from app.models import User
 import math
+import re as _re
 
 router = APIRouter(prefix="/api/chatbot", tags=["chatbot"])
 
@@ -625,6 +626,59 @@ def respond(question: str, context: dict) -> str:
     page     = context.get("activePage", "dashboard")
     urgent   = int(context.get("urgentCount", 0) or 0)
 
+    # ── RECHERCHE PAR NOM : équipement / zone / ligne / plant ─────────────────
+    # Le chatbot peut répondre sur N'IMPORTE quel élément mentionné dans la
+    # question, même hors du filtre courant, grâce à allEnergies (toutes les
+    # mesures) et backendSummary (résumé par ligne). Ex : « consommation du
+    # Slurry Pump ? », « coût de la zone Flotation ? », « CO2 Production Line 1 ».
+    all_energies = context.get("allEnergies") or energies
+
+    def _scope_answer(field):
+        """Cherche dans la question une valeur du champ (equipment/area/
+        production_line/plant) présente dans les données, et renvoie un bilan."""
+        seen, best = set(), None
+        for e in all_energies:
+            raw = e.get("rawData") or e
+            val = raw.get(field) or e.get(field)
+            if not val or str(val).lower() in seen:
+                continue
+            seen.add(str(val).lower())
+            if str(val).lower() in q:
+                best = str(val)
+        if not best:
+            return None
+        rows = [e for e in all_energies
+                if str((e.get("rawData") or e).get(field) or e.get(field) or "").lower() == best.lower()]
+        kw_s = sum(safe_float(e.get("value")) for e in rows if e.get("unit") == "kW")
+        kwh_s = sum(safe_float(e.get("value")) for e in rows if e.get("unit") == "kWh")
+        cost_s = sum(safe_float(e.get("cost")) for e in rows)
+        co2_s = sum(safe_float(e.get("co2_kg")) for e in rows)
+        label = {"equipment": "Équipement", "area": "Zone",
+                 "production_line": "Ligne", "plant": "Usine"}.get(field, field)
+        if fr:
+            return (
+                f"📊 **{label} : {best}**\n\n"
+                f"- ⚡ Puissance active : **{kw_s:.1f} kW**\n"
+                f"- 🔋 Énergie : **{kwh_s:.1f} kWh**\n"
+                f"- 💰 Coût : **{cost_s:.2f} MAD**\n"
+                f"- 🌱 CO₂ : **{co2_s:.2f} kg**\n"
+                f"- 📡 {len(rows)} mesure(s) associée(s)"
+            )
+        return (
+            f"📊 **{label}: {best}**\n\n"
+            f"- ⚡ Active power: **{kw_s:.1f} kW**\n"
+            f"- 🔋 Energy: **{kwh_s:.1f} kWh**\n"
+            f"- 💰 Cost: **{cost_s:.2f} MAD**\n"
+            f"- 🌱 CO₂: **{co2_s:.2f} kg**\n"
+            f"- 📡 {len(rows)} reading(s)"
+        )
+
+    # On teste du plus précis (équipement) au plus large (usine)
+    for _field in ("equipment", "area", "production_line", "plant"):
+        _ans = _scope_answer(_field)
+        if _ans:
+            return _ans
+
     kw    = total_kw(energies)
     cost  = cost_ctx or total_cost_fn(energies)
     co2   = total_co2_fn(energies, co2_ctx)
@@ -680,6 +734,119 @@ def respond(question: str, context: dict) -> str:
             f"- 🏆 Efficiency: **{score}%**"
             f"{alert}\n\n"
             f"Ask me anything about energy!"
+        )
+
+    # ── Nouveaux indicateurs DataPlatform : phosphate, SEC, vapeur, fuel, eau ─
+    def _sum_by(name):
+        return sum(
+            safe_float(e.get("value"))
+            for e in energies
+            if str(e.get("name", "")).lower() == name
+        )
+
+    def _word(*words):
+        return any(_re.search(rf"\b{w}\b", q) for w in words)
+
+    production_rate = _sum_by("production rate")     # t/h — balances
+    phosphate_tons  = _sum_by("phosphate production")  # t — cumul
+    steam_t  = _sum_by("steam")        # tonnes (totalisateur)
+    steam_th = _sum_by("steam flow")   # t/h
+    fuel_l   = _sum_by("fuel")         # litres (totalisateur)
+    fuel_lh  = _sum_by("fuel flow")    # L/h
+    water_m3 = _sum_by("water")        # m³
+
+    if has(q, "phosphate", "tonnage", "produced", "produit", "production rate", "cadence"):
+        sec_e = (kw / production_rate) if production_rate > 0 and kw else None
+        if fr:
+            return (
+                f"⛏️ **Production de phosphate — {line}**\n\n"
+                f"- Cadence actuelle: **{production_rate:.1f} t/h** (balances Weigh Belt)\n"
+                f"- Total produit: **{phosphate_tons:.1f} t**\n"
+                + (f"- SEC électrique: **{sec_e:.2f} kWh/t**\n" if sec_e else "")
+                + "\nMesuré par les balances à bande de la DataPlatform "
+                  "(zones Extraction et Storage Handling)."
+            )
+        return (
+            f"⛏️ **Phosphate production — {line}**\n\n"
+            f"- Current rate: **{production_rate:.1f} t/h** (weigh belt scales)\n"
+            f"- Total produced: **{phosphate_tons:.1f} t**\n"
+            + (f"- Electrical SEC: **{sec_e:.2f} kWh/t**\n" if sec_e else "")
+            + "\nMeasured by the DataPlatform weigh belt scales "
+              "(Extraction & Storage Handling)."
+        )
+
+    if _word("sec") or has(q, "specific energy", "energie specifique", "kwh/t", "kwh par tonne"):
+        if production_rate > 0:
+            lines_out = []
+            if kw:
+                lines_out.append(("⚡ Électricité" if fr else "⚡ Electricity",
+                                  f"{kw / production_rate:.2f} kWh/t"))
+            if steam_th > 0:
+                lines_out.append(("♨️ Vapeur" if fr else "♨️ Steam",
+                                  f"{steam_th / production_rate:.3f} t/t"))
+            if fuel_lh > 0:
+                lines_out.append(("⛽ Fuel", f"{fuel_lh / production_rate:.2f} L/t"))
+            body = "\n".join(f"- {k}: **{v}**" for k, v in lines_out)
+            if fr:
+                return (
+                    "📐 **SEC — énergie par tonne de phosphate produite**\n\n" + body +
+                    f"\n\nFormule: énergie mesurée ÷ cadence de production "
+                    f"(**{production_rate:.1f} t/h**). Voir le panneau SEC du Dashboard."
+                )
+            return (
+                "📐 **SEC — energy per tonne of phosphate produced**\n\n" + body +
+                f"\n\nFormula: measured energy ÷ production rate "
+                f"(**{production_rate:.1f} t/h**). See the Dashboard SEC panel."
+            )
+        return (
+            "📐 **SEC** = énergie consommée ÷ tonnes produites. "
+            "En attente des données de production (balances Weigh Belt)."
+            if fr else
+            "📐 **SEC** = energy consumed ÷ tonnes produced. "
+            "Waiting for production data (weigh belt scales)."
+        )
+
+    if _word("steam", "vapeur"):
+        if fr:
+            return (
+                f"♨️ **Vapeur — {line}**\n\n"
+                f"- Consommée: **{steam_t:.1f} t** (totalisateur Utilities)\n"
+                f"- Débit actuel: **{steam_th:.1f} t/h**\n"
+                f"- Tarif: 120 MAD/t → coût ≈ **{steam_t * 120:.0f} MAD**"
+            )
+        return (
+            f"♨️ **Steam — {line}**\n\n"
+            f"- Consumed: **{steam_t:.1f} t** (Utilities totalizer)\n"
+            f"- Current flow: **{steam_th:.1f} t/h**\n"
+            f"- Rate: 120 MAD/t → cost ≈ **{steam_t * 120:.0f} MAD**"
+        )
+
+    if _word("fuel", "carburant", "fioul", "diesel"):
+        if fr:
+            return (
+                f"⛽ **Fuel — {line}**\n\n"
+                f"- Consommé: **{fuel_l:.1f} L** (totalisateur Utilities)\n"
+                f"- Débit actuel: **{fuel_lh:.1f} L/h**\n"
+                f"- Tarif: 13.5 MAD/L → coût ≈ **{fuel_l * 13.5:.0f} MAD**"
+            )
+        return (
+            f"⛽ **Fuel — {line}**\n\n"
+            f"- Consumed: **{fuel_l:.1f} L** (Utilities totalizer)\n"
+            f"- Current flow: **{fuel_lh:.1f} L/h**\n"
+            f"- Rate: 13.5 MAD/L → cost ≈ **{fuel_l * 13.5:.0f} MAD**"
+        )
+
+    if _word("water", "eau"):
+        if fr:
+            return (
+                f"💧 **Eau — {line}**\n\n"
+                f"- Consommée: **{water_m3:.1f} m³** (débitmètres + total ligne)\n"
+                f"- Tarif ONEE: 9 MAD/m³ → coût ≈ **{water_m3 * 9:.0f} MAD**"
+            )
+        return (
+            f"💧 **Water — {line}**\n\n"
+            f"- Consumed: **{water_m3:.1f} m³** (flow meters + line total)\n"
+            f"- ONEE rate: 9 MAD/m³ → cost ≈ **{water_m3 * 9:.0f} MAD**"
         )
 
     # ── Statut général ───────────────────────────────────────────────────────

@@ -1,6 +1,62 @@
-import { useMemo, useState } from "react";
-import { aggregateByEnergy } from "../utils/energyAggregation.js";
+import { useEffect, useMemo, useState } from "react";
+import { fetchChartData, fetchLineHistory } from "../api/emsApi";
+import { aggregateByEnergy, isAggregateRollup, SUMMABLE_UNITS } from "../utils/energyAggregation.js";
 import { svgEventPoint, nearestIndex, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
+
+const CO2_FACTOR = 0.718; // kgCO₂/kWh — ONEE Maroc
+
+// ─── Régression linéaire sur les points RÉELS → prochains points ─────────────
+// Même méthode que le backend (charts.py::predict_next) : aucune valeur
+// inventée, la projection découle uniquement de l'historique DataPlatform.
+function linearForecast(values, steps = 6) {
+  if (!values || values.length < 3) return [];
+  const n = values.length;
+  const xs = values.map((_, i) => i);
+  const sx = xs.reduce((s, v) => s + v, 0);
+  const sy = values.reduce((s, v) => s + v, 0);
+  const sxy = xs.reduce((s, x, i) => s + x * values[i], 0);
+  const sxx = xs.reduce((s, x) => s + x * x, 0);
+  const den = n * sxx - sx * sx;
+  if (Math.abs(den) < 1e-9) return Array(steps).fill(+values[n - 1].toFixed(3));
+  const slope = (n * sxy - sx * sy) / den;
+  const intercept = (sy - slope * sx) / n;
+  return Array.from({ length: steps }, (_, i) =>
+    Math.max(0, +(slope * (n + i) + intercept).toFixed(3))
+  );
+}
+
+// ─── Séries temporelles réelles PAR ÉNERGIE (bucket 1 minute) ────────────────
+// Équipements physiques uniquement (un rollup n'est gardé que si son énergie
+// n'existe sur aucun équipement). Somme par minute pour les consommations,
+// moyenne pour les grandeurs de qualité — comme partout dans l'app.
+function buildEnergySeries(records = []) {
+  const phys = records.filter((r) => !isAggregateRollup(r));
+  const physNames = new Set(phys.map((r) => r.energy_name));
+  const source = [
+    ...phys,
+    ...records.filter((r) => isAggregateRollup(r) && !physNames.has(r.energy_name)),
+  ];
+
+  const byEnergy = {};
+  source.forEach((r) => {
+    if (!r.energy_name || r.value == null) return;
+    const minute = String(r.timestamp || "").slice(0, 16);
+    const e = (byEnergy[r.energy_name] = byEnergy[r.energy_name] || { unit: r.unit || "", buckets: {} });
+    const b = (e.buckets[minute] = e.buckets[minute] || { sum: 0, n: 0 });
+    b.sum += Number(r.value || 0);
+    b.n += 1;
+  });
+
+  const out = {};
+  Object.entries(byEnergy).forEach(([name, e]) => {
+    const keys = Object.keys(e.buckets).sort();
+    const values = keys.map((k) =>
+      SUMMABLE_UNITS.has(e.unit) ? e.buckets[k].sum : e.buckets[k].sum / e.buckets[k].n
+    );
+    out[name] = { unit: e.unit, values: values.slice(-24) };
+  });
+  return out;
+}
 
 function ForecastChart({ historical = [], predictions = [], unit = "", color = "#4299e1" }) {
   const W = 760, H = 260, PX = 45, PY = 20;
@@ -102,29 +158,124 @@ function ForecastChart({ historical = [], predictions = [], unit = "", color = "
 }
 
 export default function Forecasting({ energies = [], selectedLineLabel = "Production Line 1" }) {
-  const [view, setView] = useState("daily");
+  const [ap, setAp] = useState(null); // active_power RÉEL : historique + prédictions régression
 
-  const fallbackForecast = useMemo(() => {
-    const inc  = view === "daily" ? 1.05 : view === "weekly" ? 1.08 : 1.12;
-    const base = energies.slice(0, 3).map((e) => e.value || 0);
-    const avg  = base.length ? base.reduce((s, v) => s + v, 0) / base.length : 100;
-    return Array.from({ length: 12 }, (_, i) =>
-      parseFloat((avg * Math.pow(inc, i * 0.1) + ((i % 3) - 1) * avg * 0.03).toFixed(2))
-    );
-  }, [energies, view]);
+  // Prévision RÉELLE : le backend applique une régression linéaire sur
+  // l'historique réel de la DataPlatform (puissance active). Aucune valeur
+  // n'est inventée — on récupère l'historique réel + les points prédits.
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      fetchChartData(selectedLineLabel, 40)
+        .then((d) => { if (alive) setAp(d?.active_power || null); })
+        .catch(() => {});
+    load();
+    const iv = setInterval(load, 10000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [selectedLineLabel]);
 
-  const labels = {
-    daily:   ["00h","02h","04h","06h","08h","10h","12h","14h","16h","18h","20h","22h"],
-    weekly:  ["Mon","Tue","Wed","Thu","Fri","Sat","Sun","M2","T2","W2","T2","F2"],
-    monthly: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"],
-  }[view];
+  const realHistory     = ap?.values || [];
+  const realPredictions = ap?.predictions || [];
+  const hasReal         = realHistory.length >= 2;
+
+  // Historique réel PAR ÉNERGIE (DataPlatform) → une projection par énergie.
+  const [energySeries, setEnergySeries] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      fetchLineHistory(selectedLineLabel, 400)
+        .then((rs) => { if (alive) setEnergySeries(buildEnergySeries(rs || [])); })
+        .catch(() => {});
+    load();
+    const iv = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [selectedLineLabel]);
+
+  // Série CO₂ : mesure directe si la DataPlatform la publie, sinon dérivée du
+  // compteur kWh réel × 0.718 (même convention que la page Carbon Emissions).
+  const co2Series = useMemo(() => {
+    const direct = Object.entries(energySeries).find(([n]) => /co2|co₂/i.test(n));
+    if (direct && direct[1].values.length >= 3) {
+      return { unit: direct[1].unit || "kgCO2", values: direct[1].values, source: "direct" };
+    }
+    const kwh = energySeries["Electricity-kWh"];
+    if (kwh && kwh.values.length >= 3) {
+      return { unit: "kgCO2", values: kwh.values.map((v) => +(v * CO2_FACTOR).toFixed(3)), source: "kWh × 0.718" };
+    }
+    return null;
+  }, [energySeries]);
+
+  // Graphes de projection par énergie : les énergies FACTURABLES présentes.
+  const FORECAST_ENERGIES = [
+    { name: "Electricity-kWh", label: "Electricity (kWh)", tab: "⚡ Electricity", color: "#7c3aed" },
+    { name: "Water",           label: "Water (m³)",        tab: "💧 Water",       color: "#0284c7" },
+    { name: "Steam",           label: "Steam (tonne)",     tab: "♨️ Steam",       color: "#ed8936" },
+    { name: "Fuel",            label: "Fuel (L)",          tab: "⛽ Fuel",        color: "#e53e3e" },
+  ];
+  const forecastCharts = FORECAST_ENERGIES
+    .map((fe) => ({ ...fe, serie: energySeries[fe.name] }))
+    .filter((fe) => fe.serie && fe.serie.values.length >= 3)
+    .map((fe) => ({ ...fe, predictions: linearForecast(fe.serie.values, 6) }));
+
+  const co2Predictions = co2Series ? linearForecast(co2Series.values, 6) : [];
+
+  // UN graphe + filtre : chaque bouton bascule sur la série réelle de
+  // l'énergie choisie (électricité, eau, vapeur, fuel, CO₂).
+  const forecastOptions = [
+    ...forecastCharts.map((fe) => ({
+      key: fe.name, label: fe.label, tab: fe.tab, color: fe.color,
+      serie: fe.serie, predictions: fe.predictions,
+    })),
+    ...(co2Series && co2Predictions.length > 0
+      ? [{
+          key: "CO2", label: `CO₂ (kg) — ${co2Series.source}`, tab: "🌱 CO₂",
+          color: "#38a169", serie: { unit: "kg", values: co2Series.values },
+          predictions: co2Predictions,
+        }]
+      : []),
+  ];
+  const [selectedForecast, setSelectedForecast] = useState("");
+  const activeForecast =
+    forecastOptions.find((o) => o.key === selectedForecast) || forecastOptions[0];
 
   const electricEnergies = energies.filter((e) => e.unit === "kW");
   const totalKw          = electricEnergies.reduce((s, e) => s + e.value, 0);
   const kwhE             = energies.find((e) => e.unit === "kWh");
 
-  // Résumé par énergie : UNE carte par énergie (agrégée sur les équipements)
-  const energySummary = aggregateByEnergy(energies);
+  // Tendance dérivée UNIQUEMENT des vraies prédictions (moyenne des points
+  // prédits / moyenne récente). Null si pas assez de données réelles → on
+  // n'affiche alors AUCUNE projection inventée.
+  const trend = useMemo(() => {
+    if (!hasReal || realPredictions.length === 0) return null;
+    const recent = realHistory.slice(-5);
+    const avgNow = recent.reduce((s, v) => s + v, 0) / recent.length;
+    const avgFut = realPredictions.reduce((s, v) => s + v, 0) / realPredictions.length;
+    return avgNow > 0 ? avgFut / avgNow : null;
+  }, [hasReal, realHistory, realPredictions]);
+
+  // Résumé par énergie : UNE carte par énergie, agrégée sur les ÉQUIPEMENTS
+  // physiques (un rollup n'est gardé que si son énergie n'existe nulle part
+  // ailleurs — sinon double comptage avec le total de ligne).
+  const physicalList = energies.filter((e) => !isAggregateRollup(e));
+  const physNames = new Set(physicalList.map((e) => String(e.name || "").toLowerCase()));
+  const kpiSource = [
+    ...physicalList,
+    ...energies.filter(
+      (e) => isAggregateRollup(e) && !physNames.has(String(e.name || "").toLowerCase())
+    ),
+  ];
+  const energySummary = aggregateByEnergy(kpiSource);
+
+  // Projection PAR énergie : régression sur SA propre série réelle ;
+  // à défaut, la tendance globale (kW) ; sinon aucune projection.
+  const forecastFor = (energy) => {
+    const serie = energySeries[energy.name];
+    if (serie && serie.values.length >= 3) {
+      const preds = linearForecast(serie.values, 3);
+      if (preds.length) return preds[preds.length - 1];
+    }
+    return trend != null ? energy.value * trend : null;
+  };
 
   return (
     <div className="overview-page">
@@ -150,9 +301,7 @@ export default function Forecasting({ energies = [], selectedLineLabel = "Produc
             <div className="kpi-icon" style={{ color: "#ed8936" }}>📈</div>
             <div className="kpi-badge" style={{ background: "#ed8936" }}>Forecast</div>
             <h3 style={{ color: "#ed8936" }}>
-              {totalKw > 0
-                ? `${(totalKw * (view === "daily" ? 1.05 : view === "weekly" ? 1.08 : 1.12)).toFixed(1)} kW`
-                : "—"}
+              {totalKw > 0 && trend != null ? `${(totalKw * trend).toFixed(1)} kW` : "—"}
             </h3>
             <p>Next Power Forecast</p>
           </div>
@@ -166,69 +315,105 @@ export default function Forecasting({ energies = [], selectedLineLabel = "Produc
             </div>
           )}
 
-          {totalKw > 0 && (
+          {co2Predictions.length > 0 ? (
             <div className="kpi-card">
               <div className="kpi-icon leaf" style={{ color: "#38a169" }}>🌱</div>
               <div className="kpi-badge" style={{ background: "#38a169" }}>Forecast</div>
               <h3 style={{ color: "#38a169" }}>
-                {(totalKw * (view === "daily" ? 1.05 : 1.08) * 0.718 / 1000).toFixed(4)} tCO₂e/h
+                {co2Predictions[co2Predictions.length - 1].toFixed(2)} kg
+              </h3>
+              <p>Forecast CO₂ (next window)</p>
+              <span>Regression on real CO₂ series ({co2Series.source})</span>
+            </div>
+          ) : totalKw > 0 && trend != null && (
+            <div className="kpi-card">
+              <div className="kpi-icon leaf" style={{ color: "#38a169" }}>🌱</div>
+              <div className="kpi-badge" style={{ background: "#38a169" }}>Forecast</div>
+              <h3 style={{ color: "#38a169" }}>
+                {(totalKw * trend * 0.718 / 1000).toFixed(4)} tCO₂e/h
               </h3>
               <p>Forecast CO₂ Rate</p>
-              <span>kW × 0.718 / 1000</span>
+              <span>predicted kW × 0.718 / 1000</span>
             </div>
           )}
         </div>
       </section>
 
-      {/* Graphe */}
+      {/* Graphe : historique RÉEL + prédictions par régression (backend) */}
       <section className="panel-card">
         <div className="panel-head">
           <div>
-            <h2>Load Forecasting</h2>
-            <p>Trend-based local forecast</p>
-          </div>
-          <div className="switch-tags">
-            {["daily", "weekly", "monthly"].map((v) => (
-              <button
-                key={v}
-                className={view === v ? "active" : ""}
-                onClick={() => setView(v)}
-                type="button"
-              >
-                {v.charAt(0).toUpperCase() + v.slice(1)}
-              </button>
-            ))}
+            <h2>Load Forecasting — Active Power (kW)</h2>
+            <p>· {realHistory.length} live points</p>
           </div>
         </div>
-        <ForecastChart
-          historical={fallbackForecast.slice(0, 8)}
-          predictions={fallbackForecast.slice(8)}
-          unit="kW"
-          color="#4299e1"
-        />
-        <div style={{ display: "flex", justifyContent: "space-between", marginTop: "0.5rem", fontSize: "0.8rem", color: "#94a3b8" }}>
-          {labels.slice(0, 6).map((l, i) => <span key={i}>{l}</span>)}
-        </div>
+        {hasReal ? (
+          <ForecastChart
+            historical={realHistory}
+            predictions={realPredictions}
+            unit="kW"
+            color="#4299e1"
+          />
+        ) : (
+          <div style={{ textAlign: "center", padding: "2rem", color: "#888" }}>
+            ⏳ Waiting for enough real active-power history to forecast…
+          </div>
+        )}
       </section>
+
+      {/* Projections PAR ÉNERGIE : UN graphe + filtre par énergie.
+          Historique réel (1 pt/min) + régression — eau, fuel, vapeur, CO₂. */}
+      {forecastOptions.length > 0 && activeForecast && (
+        <section className="panel-card">
+          <div className="panel-head">
+            <div>
+              <h2>Forecast by Energy Type — {activeForecast.label}</h2>
+              <p>
+                {activeForecast.serie.values.length} real points · +
+                {activeForecast.predictions.length} forecast (linear regression)
+              </p>
+            </div>
+            <div className="switch-tags">
+              {forecastOptions.map((o) => (
+                <button
+                  key={o.key}
+                  type="button"
+                  className={activeForecast.key === o.key ? "active" : ""}
+                  onClick={() => setSelectedForecast(o.key)}
+                >
+                  {o.tab}
+                </button>
+              ))}
+            </div>
+          </div>
+          <ForecastChart
+            historical={activeForecast.serie.values}
+            predictions={activeForecast.predictions}
+            unit={activeForecast.serie.unit}
+            color={activeForecast.color}
+          />
+        </section>
+      )}
 
       {/* Résumé par énergie */}
       <section className="section-block">
         <div className="section-title-wrap">
           <h2>Forecast Summary by Energy Type</h2>
-          <p>{view} view</p>
+          <p>Each energy projected with the regression of its own real series</p>
         </div>
         <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
           {energySummary.length > 0 ? (
-            energySummary.map((energy) => (
-              <div className="kpi-card" key={`${energy.name}-${energy.unit}`}>
-                <div className="kpi-icon blue">📈</div>
-                <h3>
-                  {(energy.value * (view === "daily" ? 1.05 : view === "weekly" ? 1.08 : 1.12)).toFixed(2)} {energy.unit}
-                </h3>
-                <p>Forecast {energy.name}</p>
-                <span>Current: {energy.value.toFixed(2)} {energy.unit}</span>
-              </div>
-            ))
+            energySummary.map((energy) => {
+              const predicted = forecastFor(energy);
+              return (
+                <div className="kpi-card" key={`${energy.name}-${energy.unit}`}>
+                  <div className="kpi-icon blue">📈</div>
+                  <h3>{predicted != null ? `${predicted.toFixed(2)} ${energy.unit}` : "—"}</h3>
+                  <p>Forecast {energy.name}</p>
+                  <span>Current: {energy.value.toFixed(2)} {energy.unit}</span>
+                </div>
+              );
+            })
           ) : (
             <div style={{ gridColumn: "1 / -1", textAlign: "center", color: "#888" }}>
               No energy data — DataPlatform not connected.

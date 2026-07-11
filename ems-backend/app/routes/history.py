@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 
 from app.core.deps import get_current_active_user
 from app.db import get_db
-from app.models import TelemetryRecord
-from app.utils import calculate_cost, calculate_co2
+from app.models import TelemetryRecord, EnergyHistory
+from app.utils import calculate_cost, calculate_co2, is_aggregate_rollup
 
 router = APIRouter(prefix="/api/history", tags=["history"],
                    dependencies=[Depends(get_current_active_user)])
@@ -241,11 +241,25 @@ def get_all_lines_summary(
         # Puissance instantanée (kW) — énergie consommée
         kw_vals = [r.value for r in records if r.unit == "kW"]
 
-        # Compteur cumulé (kWh) sur la période → consommation = max - min
-        kwh_vals_period = [r.value for r in records if r.unit == "kWh"]
-        kwh_start = min(kwh_vals_period) if kwh_vals_period else 0.0
-        kwh_end   = max(kwh_vals_period) if kwh_vals_period else 0.0
-        consumption_kwh = max(0.0, kwh_end - kwh_start)
+        # Consommation kWh de la période : delta (max - min) PAR équipement,
+        # sommé sur les équipements PHYSIQUES. On ne mélange plus les compteurs
+        # de plusieurs équipements et du rollup « Total » dans un même max/min
+        # (ça surestimait la consommation). Repli sur le rollup si la ligne ne
+        # publie aucun compteur d'équipement.
+        kwh_by_eq = {}
+        for r in records:
+            if r.unit == "kWh":
+                kwh_by_eq.setdefault((r.equipment or "", r.area or ""), []).append(r.value)
+        phys_deltas = [
+            max(vals) - min(vals)
+            for (eq, area), vals in kwh_by_eq.items()
+            if not is_aggregate_rollup(area, eq)
+        ]
+        if phys_deltas:
+            consumption_kwh = max(0.0, sum(phys_deltas))
+        else:
+            all_deltas = [max(vals) - min(vals) for vals in kwh_by_eq.values()]
+            consumption_kwh = max(0.0, sum(all_deltas)) if all_deltas else 0.0
 
         # Compteur cumulé TOTAL (depuis toujours) pour cette ligne
         cumulative_query = (
@@ -285,3 +299,102 @@ def get_all_lines_summary(
         }
 
     return {"period": period, "lines": result}
+
+@router.get("/invoice")
+def get_invoice(
+    start: str | None = Query(default=None),   # ISO "2026-07-01" ou datetime
+    end: str | None = Query(default=None),
+    line: str | None = Query(default=None),    # optionnel : une ligne précise
+    db: Session = Depends(get_db),
+):
+    """
+    Facture énergétique sur une plage de dates : total + détail par énergie,
+    par équipement, par zone et par ligne. Basé sur energy_history.cost
+    (coût réel calculé à l'ingestion depuis les tarifs ONEE).
+    """
+    def parse(d, default):
+        if not d:
+            return default
+        try:
+            return datetime.fromisoformat(str(d).replace("Z", "").split(".")[0][:19]
+                                          if "T" in str(d) else f"{d}T00:00:00")
+        except Exception:
+            return default
+
+    now = datetime.utcnow()
+    start_dt = parse(start, now - timedelta(days=30))
+    end_dt = parse(end, now)
+    if "T" not in str(end or ""):
+        end_dt = end_dt + timedelta(days=1)  # inclure toute la journée de fin
+
+    # Agrégation SQL : min/max du compteur PAR (équipement, énergie, zone, ligne)
+    # sur la période. La consommation réelle = max - min (delta du compteur),
+    # PAS la somme de chaque relevé (qui gonflait la facture à des milliards).
+    q = (
+        db.query(
+            EnergyHistory.equipment.label("equipment"),
+            EnergyHistory.energy_name.label("energy"),
+            EnergyHistory.area.label("area"),
+            EnergyHistory.production_line.label("line"),
+            EnergyHistory.unit.label("unit"),
+            func.min(EnergyHistory.value).label("vmin"),
+            func.max(EnergyHistory.value).label("vmax"),
+        )
+        .filter(
+            EnergyHistory.timestamp >= start_dt,
+            EnergyHistory.timestamp < end_dt,
+        )
+    )
+    if line:
+        q = q.filter(EnergyHistory.production_line == line)
+    q = q.group_by(
+        EnergyHistory.equipment, EnergyHistory.energy_name,
+        EnergyHistory.area, EnergyHistory.production_line, EnergyHistory.unit,
+    )
+
+    # Une ligne de facture par (équipement, énergie). On IGNORE :
+    #  - les rollups d'agrégation (Total / zones) → double comptage,
+    #  - les kW (puissance instantanée) → on ne facture que l'énergie (kWh /
+    #    tonne / L / m³), jamais la puissance.
+    items = []
+    for g in q.all():
+        if is_aggregate_rollup(g.area, g.equipment):
+            continue
+        if (g.unit or "").strip().lower() == "kw":
+            continue
+        consumption = max(0.0, float(g.vmax or 0) - float(g.vmin or 0))
+        cost = calculate_cost(g.energy, consumption)   # consommation × tarif ONEE
+        if cost <= 0:                                  # non facturable (voltage, CO₂…)
+            continue
+        items.append({
+            "equipment": g.equipment or "—", "energy": g.energy or "—",
+            "area": g.area or "—", "line": g.line or "—", "unit": g.unit,
+            "consumption": consumption, "cost": round(cost, 2),
+        })
+
+    def group_by(field):
+        acc = {}
+        for it in items:
+            k = it[field] or "—"
+            a = acc.setdefault(k, {"cost": 0.0, "value": 0.0, "unit": it["unit"]})
+            a["cost"]  += it["cost"]
+            a["value"] += it["consumption"]
+        return [
+            {"name": k, "cost": round(v["cost"], 2),
+             "quantity": round(v["value"], 2), "unit": v["unit"]}
+            for k, v in sorted(acc.items(), key=lambda x: -x[1]["cost"])
+        ]
+
+    total = round(sum(it["cost"] for it in items), 2)
+
+    return {
+        "start": start_dt.isoformat(),
+        "end": (end_dt - timedelta(days=1)).isoformat() if "T" not in str(end or "") else end_dt.isoformat(),
+        "line": line or "All lines",
+        "total_cost": total,
+        "records": len(items),
+        "by_energy": group_by("energy"),
+        "by_equipment": group_by("equipment"),
+        "by_zone": group_by("area"),
+        "by_line": group_by("line"),
+    }

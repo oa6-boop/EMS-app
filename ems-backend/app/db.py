@@ -8,9 +8,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Défaut = base PROPRE de l'application EMS (jamais la base TimescaleDB de la
+# DataPlatform). En Docker/local, DATABASE_URL est fixé par le compose / .env
+# et surcharge ce défaut ; ce fallback évite juste de créer par erreur les
+# tables de l'app dans ems_db (TimescaleDB) si l'env n'était pas défini.
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://ems_user:ems_password@localhost:5432/ems_db"
+    "postgresql://ems_app_user:ems_app_password@localhost:5434/ems_app_db"
 )
 
 # PostgreSQL engine

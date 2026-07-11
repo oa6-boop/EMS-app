@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCached, setCached } from "../utils/pageCache.js";
+import { groupByEquipment } from "../utils/energyAggregation.js";
 import { fetchChartData } from "../api/emsApi";
 import { svgEventPoint, nearestIndex, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
@@ -177,6 +178,10 @@ export default function RealTimeMonitoring({
   powerQualityHistory = [],
   energies            = [],
   selectedLineLabel   = "Production Line 1",
+  selectedPlant       = "all",
+  selectedZone        = "all",
+  selectedEquipment   = "all",
+  selectedTag         = "",
 }) {
   const [chartData,     setChartData]     = useState(() => getCached("rtm_chart", null));
   useEffect(() => { setCached("rtm_chart", chartData); }, [chartData]);
@@ -186,7 +191,10 @@ export default function RealTimeMonitoring({
     const load = async () => {
       setLoadingCharts(true);
       try {
-        const charts = await fetchChartData(selectedLineLabel, 30);
+        const charts = await fetchChartData(selectedLineLabel, 30, {
+          plant: selectedPlant, zone: selectedZone,
+          equipment: selectedEquipment, tag: selectedTag,
+        });
         setChartData(charts);
       } catch {}
       finally { setLoadingCharts(false); }
@@ -194,7 +202,7 @@ export default function RealTimeMonitoring({
     load();
     const iv = setInterval(load, 10000);
     return () => clearInterval(iv);
-  }, [selectedLineLabel]);
+  }, [selectedLineLabel, selectedPlant, selectedZone, selectedEquipment, selectedTag]);
 
   const tension   = data.tension          ?? 230;
   const frequence = data.frequence        ?? 50;
@@ -299,47 +307,51 @@ export default function RealTimeMonitoring({
           <table>
             <thead>
               <tr>
-                <th>Equipment</th><th>Area</th><th>Energy Type</th>
-                <th>Value</th><th>Unit</th><th>Voltage</th>
+                <th>Equipment</th><th>Area</th><th>Power (kW)</th>
+                <th>Energy (kWh)</th><th>Main Measure</th><th>Voltage</th>
                 <th>Power Factor</th><th>Frequency</th><th>THD</th><th>Updated</th>
               </tr>
             </thead>
             <tbody>
-              {energies.length > 0 ? energies.map(e => (
-                <tr key={e.id}>
-                  <td><strong>{e.rawData?.equipment || "—"}</strong></td>
-                  <td>{e.rawData?.area || "—"}</td>
-                  <td>{e.name}</td>
-                  <td><strong>{e.value.toFixed(2)}</strong></td>
-                  <td>{e.unit}</td>
+              {/* UNE ligne par équipement physique (12 lignes) — plus de
+                  doublons par mesure ni de rollups de zone/ligne */}
+              {energies.length > 0 ? groupByEquipment(energies).map(eq => (
+                <tr key={eq.name}>
+                  <td><strong>{eq.name}</strong></td>
+                  <td>{eq.area}</td>
+                  <td>{eq.kw != null ? <strong>{eq.kw.toFixed(2)}</strong> : "—"}</td>
+                  <td>{eq.kwh != null ? eq.kwh.toFixed(2) : "—"}</td>
                   <td>
-                    {e.rawData?.voltage != null ? (
-                      <span style={{ color: Number(e.rawData.voltage) >= 210 && Number(e.rawData.voltage) <= 250 ? "#38a169" : "#e53e3e" }}>
-                        {Number(e.rawData.voltage).toFixed(1)} V
+                    {eq.primary
+                      ? `${eq.primary.value.toFixed(1)} ${eq.primary.unit} · ${eq.primary.name}`
+                      : "—"}
+                  </td>
+                  <td>
+                    {eq.voltage != null ? (
+                      <span style={{ color: eq.voltage >= 210 && eq.voltage <= 250 ? "#38a169" : "#e53e3e" }}>
+                        {eq.voltage.toFixed(1)} V
                       </span>
                     ) : "—"}
                   </td>
                   <td>
-                    {e.rawData?.power_factor != null ? (
-                      <span style={{ color: e.rawData.power_factor >= 0.90 ? "#38a169" : "#e53e3e" }}>
-                        {Number(e.rawData.power_factor).toFixed(3)}
+                    {eq.power_factor != null ? (
+                      <span style={{ color: eq.power_factor >= 0.90 ? "#38a169" : "#e53e3e" }}>
+                        {eq.power_factor.toFixed(3)}
                       </span>
                     ) : "—"}
                   </td>
                   <td>
-                    {e.rawData?.frequency != null
-                      ? `${Number(e.rawData.frequency).toFixed(2)} Hz`
-                      : "50.00 Hz"}
+                    {eq.frequency != null ? `${eq.frequency.toFixed(2)} Hz` : "—"}
                   </td>
                   <td>
-                    {e.rawData?.thd != null ? (
-                      <span style={{ color: Number(e.rawData.thd) <= 5 ? "#38a169" : "#e53e3e" }}>
-                        {Number(e.rawData.thd).toFixed(1)} %
+                    {eq.thd != null ? (
+                      <span style={{ color: eq.thd <= 5 ? "#38a169" : "#e53e3e" }}>
+                        {eq.thd.toFixed(1)} %
                       </span>
                     ) : "—"}
                   </td>
                   <td style={{ fontSize:"0.8rem", color:"#888" }}>
-                    {e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : "—"}
+                    {eq.timestamp ? new Date(eq.timestamp).toLocaleTimeString() : "—"}
                   </td>
                 </tr>
               )) : (

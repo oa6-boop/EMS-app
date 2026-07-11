@@ -1,6 +1,5 @@
-# EMS — Energy Management System
+# EMS App
 
-Application web de supervision énergétique industrielle (usine Al Youssoufia — JESA / OCP).
 
 ---
 

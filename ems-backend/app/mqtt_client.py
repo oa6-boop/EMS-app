@@ -94,12 +94,24 @@ PAYLOAD_META_KEYS = {
 }
 
 # Tensions et courants triphasés : moyenne pour alimenter Power Quality.
+# Tensions PHASE-NEUTRE (~230 V) : moyennées en une seule "voltage_V" (la
+# tension de référence de l'app, nominale 230 V). Les phase-phase en sont
+# EXCLUES pour ne pas fausser la moyenne (~400 V).
 THREE_PHASE_VOLTAGE_KEYS = {
     "voltage_v1", "voltage_v2", "voltage_v3",
     "voltage_l1n", "voltage_l2n", "voltage_l3n",
-    "voltage_l1l2", "voltage_l2l3", "voltage_l3l1",
+    "v_l1n", "v_l2n", "v_l3n",
 }
-THREE_PHASE_CURRENT_KEYS = {"current_l1", "current_l2", "current_l3"}
+# Tensions PHASE-PHASE : ignorées (ni carte KPI, ni moyenne).
+PHASE_TO_PHASE_VOLTAGE_KEYS = {
+    "voltage_l1l2", "voltage_l2l3", "voltage_l3l1",
+    "v_l1l2", "v_l2l3", "v_l3l1",
+}
+THREE_PHASE_CURRENT_KEYS = {
+    "current_l1", "current_l2", "current_l3",
+    "current_a1", "current_a2", "current_a3",
+    "i_l1", "i_l2", "i_l3",
+}
 
 CANONICAL_MEASUREMENT_KEYS = {
     "frequency_Hz": {
@@ -341,19 +353,22 @@ def normalize_measurements(measurements: dict) -> dict:
     for raw_key, value in measurements.items():
         key_lower = str(raw_key).strip().lower()
 
+        # Tensions phase-neutre → moyennées en voltage_V (PAS de carte séparée)
         if key_lower in THREE_PHASE_VOLTAGE_KEYS:
             v = safe_float(value)
             if v is not None:
                 phase_voltages.append(v)
-            # garder aussi la mesure originale comme KPI détaillé
-            normalized[raw_key] = value
             continue
 
+        # Tensions phase-phase → totalement ignorées (fausseraient la moyenne)
+        if key_lower in PHASE_TO_PHASE_VOLTAGE_KEYS:
+            continue
+
+        # Courants par phase → moyennés en current_A (PAS de carte séparée)
         if key_lower in THREE_PHASE_CURRENT_KEYS:
             i = safe_float(value)
             if i is not None:
                 phase_currents.append(i)
-            normalized[raw_key] = value
             continue
 
         matched = False

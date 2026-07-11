@@ -48,6 +48,8 @@ function renderMarkdown(text) {
 
 export default function ChatbotWidget({
   energies          = [],
+  allEnergies       = [],
+  backendSummary    = {},
   selectedLineLabel = "",
   urgentCount       = 0,
   usersCount        = 0,
@@ -62,6 +64,8 @@ export default function ChatbotWidget({
 
   const context = useMemo(() => ({
     energies,
+    allEnergies,          // toutes les mesures (toutes lignes/zones/équipements)
+    backendSummary,       // résumé par ligne (avec équipements et énergies)
     selectedLineLabel,
     urgentCount,
     usersCount,
@@ -71,7 +75,7 @@ export default function ChatbotWidget({
     peakKw,
     totalCo2,
     totalCost,
-  }), [energies, selectedLineLabel, urgentCount, usersCount, activePage,
+  }), [energies, allEnergies, backendSummary, selectedLineLabel, urgentCount, usersCount, activePage,
        avgVoltage, avgPowerFactor, peakKw, totalCo2, totalCost]);
 
   const [open,      setOpen]      = useState(false);

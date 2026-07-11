@@ -116,6 +116,7 @@ export default function IndustryOverview({
     lines: [],
     zones: [],
     plants: [],
+    equipment: [],
   });
   const [error, setError] = useState("");
   const [period, setPeriod] = useState("day");
@@ -144,6 +145,7 @@ export default function IndustryOverview({
         lines: s.lines || [],
         zones: s.areas || [],
         plants: s.plants || [],
+        equipment: s.equipment || [],
       });
     } catch {
       // ignore
@@ -228,8 +230,17 @@ export default function IndustryOverview({
       ? Number((totalCumulKwh * 1.4).toFixed(2))
       : Object.values(linesSummary).reduce((s, l) => s + (l.cumulative_cost || 0), 0);
 
+  // Rollup d'agrégation (pas un équipement) : zone « Line Total » ou équipement
+  // portant le nom de sa zone. Même règle que le backend / les autres pages.
+  const isRollup = (e) => {
+    const a = String(e.area || e.zone || "").trim().toLowerCase();
+    const eq = String(e.equipment || "").trim().toLowerCase();
+    return a === "line total" || (eq !== "" && eq === a);
+  };
   const equipmentCount = backendLines.reduce((count, line) => {
-    const set = new Set((line.energies || []).map((e) => e.equipment).filter(Boolean));
+    const set = new Set(
+      (line.energies || []).filter((e) => e.equipment && !isRollup(e)).map((e) => e.equipment)
+    );
     return count + set.size;
   }, 0);
 
@@ -304,7 +315,7 @@ export default function IndustryOverview({
 
             <div className="carbon-card">
               <h4>⚡ Active Meters</h4>
-              <strong>{equipmentCount || Object.keys(linesSummary).length}</strong>
+              <strong>{structure.equipment.length || equipmentCount || Object.keys(linesSummary).length}</strong>
             </div>
           </div>
         </section>

@@ -56,7 +56,19 @@ function CarbonLineChart({ data = [], labels = [], timestamps = [] }) {
   );
 }
 
-export default function CarbonEmissions({ energies = [], carbonHistory = [], totalCo2 = 0, selectedLineLabel = "Production Line 1" }) {
+export default function CarbonEmissions({ energies = [], carbonHistory: rawHistory = [], totalCo2 = 0, selectedLineLabel = "Production Line 1" }) {
+
+  // Historique ÉQUIPEMENTS physiques uniquement : les rollups (zone « Line
+  // Total » / équipement = nom de sa zone) portent déjà la somme → les mélanger
+  // à la série fausserait le graphe et le tableau. Repli sur l'historique brut
+  // si la ligne ne publie QUE des totaux.
+  const isRollupRec = (r) => {
+    const a = String(r.area || "").trim().toLowerCase();
+    const e = String(r.equipment || "").trim().toLowerCase();
+    return a === "line total" || (e !== "" && e === a);
+  };
+  const physHistory = rawHistory.filter((r) => !isRollupRec(r));
+  const carbonHistory = physHistory.length > 0 ? physHistory : rawHistory;
 
   // Filtrer UNIQUEMENT les énergies CO2 (pas l'électricité)
   const co2Energies = energies.filter(e => {
@@ -90,11 +102,7 @@ export default function CarbonEmissions({ energies = [], carbonHistory = [], tot
   const labelCount = Math.min(7, co2Series.length);
   const labels = Array.from({ length: labelCount }, (_, i) => i === labelCount - 1 ? "now" : `-${(labelCount - 1 - i) * 2}m`);
 
-  // Objectif mensuel : -5 %. L'avancement est CALCULÉ depuis les données
-  // réelles de la DataPlatform. IMPORTANT : le CO₂ dérive souvent du compteur
-  // kWh CUMULÉ (série toujours croissante) — comparer les moyennes brutes
-  // donnerait toujours "0 %". On détecte les séries cumulées et on travaille
-  // alors sur les INCRÉMENTS (taux d'émission), qui peuvent monter ou baisser.
+  
   const TARGET_PCT = 5;
   let achieved = null;
   if (co2Series.length >= 8) {
@@ -121,10 +129,17 @@ export default function CarbonEmissions({ energies = [], carbonHistory = [], tot
     ? Math.max(0, Math.min(100, (achieved / TARGET_PCT) * 100)).toFixed(0)
     : null;
 
-  // KPI CO2 par équipement
+  // KPI CO2 par équipement — on exclut les rollups d'agrégation (zone
+  // « Line Total » ou équipement = nom de sa zone) pour rester cohérent avec
+  // les cartes équipement (le CO₂ total, lui, vient du prop totalCo2).
+  const isRollup = (r) => {
+    const a = String(r.area || "").trim().toLowerCase();
+    const e = String(r.equipment || "").trim().toLowerCase();
+    return a === "line total" || (e !== "" && e === a);
+  };
   const equipmentCo2 = {};
   carbonHistory.forEach(r => {
-    if (!r.equipment) return;
+    if (!r.equipment || isRollup(r)) return;
     if (!equipmentCo2[r.equipment]) equipmentCo2[r.equipment] = { total: 0, count: 0 };
     equipmentCo2[r.equipment].total += r.co2_kg || 0;
     equipmentCo2[r.equipment].count += 1;
@@ -185,7 +200,6 @@ export default function CarbonEmissions({ energies = [], carbonHistory = [], tot
           <div className="carbon-card">
             <h4>⚡ Energy consumed</h4>
             <strong>{totalKwhAcc > 0 ? `${totalKwhAcc.toFixed(2)} kWh` : kwhEnergy ? `${kwhEnergy.value.toFixed(2)} kWh` : "—"}</strong>
-            <span>Electricity generating these emissions</span>
           </div>
         </div>
       </section>

@@ -45,6 +45,7 @@ import {
   sendForgotPasswordRequest,
 } from "./api/authApi";
 
+import { isAggregateRollup } from "./utils/energyAggregation.js";
 import { fetchLatestMessageNotifications } from "./api/chatApi";
 import { logAudit } from "./api/auditApi";
 import { fetchIndustryAlarms } from "./api/industryApi";
@@ -190,14 +191,6 @@ function buildEnergyDefaults(name = "") {
   return { min: 0, max: 1000, step: 10 };
 }
 
-function createChart(value, max) {
-  const ratio = Math.max(10, Math.min(95, (value / (max || 500)) * 100));
-
-  return Array.from({ length: 10 }, (_, i) =>
-    Math.max(5, Math.min(100, ratio + ((i % 3) - 1) * 3))
-  );
-}
-
 function convertEnergies(lineData = [], lineLabel = "") {
   return lineData.map((item, index) => {
     const defaults = buildEnergyDefaults(item.energy_name);
@@ -226,7 +219,6 @@ function convertEnergies(lineData = [], lineLabel = "") {
       min: defaults.min,
       max: defaults.max,
       step: defaults.step,
-      chart: createChart(value, defaults.max),
       cost: Number(item.cost || 0),
       co2_kg: Number(item.co2_kg || 0),
       timestamp: item.timestamp,
@@ -290,6 +282,14 @@ function buildStructure(energies) {
     const line = e.line || "Production Line 1";
     const zone = e.zone || e.area || "Zone A";
     const equipment = e.equipment || "Equipment";
+
+    // On ignore les rollups d'agrégation (pas de vrais équipements ni zones) :
+    //  - zone « Line Total » (Total / Total water consumption) → agrégat de ligne
+    //  - équipement portant le nom de sa zone (Extraction, Washing…) → total de zone
+    // → le compte du header, les filtres et les cartes restent cohérents.
+    const zLow = String(zone).trim().toLowerCase();
+    const eLow = String(equipment).trim().toLowerCase();
+    if (zLow === "line total" || eLow === zLow) return;
 
     tree[plant] = tree[plant] || {};
     tree[plant][line] = tree[plant][line] || {};
@@ -448,7 +448,7 @@ function App() {
   useEffect(() => {
     const load = async () => {
       try {
-        const response = await fetchPowerQualityHistory(activeLineLabel, 48);
+        const response = await fetchPowerQualityHistory(activeLineLabel, 48, selection);
         setPowerQualityHistory(response || []);
       } catch {
         // ignore
@@ -460,12 +460,12 @@ function App() {
     const intervalId = setInterval(load, 10000);
 
     return () => clearInterval(intervalId);
-  }, [activeLineLabel]);
+  }, [activeLineLabel, selection.plant, selection.zone, selection.equipment, selection.tag]);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const response = await fetchCarbonHistory(activeLineLabel, 48);
+        const response = await fetchCarbonHistory(activeLineLabel, 48, selection);
         setCarbonHistory(response || []);
       } catch {
         // ignore
@@ -477,7 +477,7 @@ function App() {
     const intervalId = setInterval(load, 10000);
 
     return () => clearInterval(intervalId);
-  }, [activeLineLabel]);
+  }, [activeLineLabel, selection.plant, selection.zone, selection.equipment, selection.tag]);
 
   useEffect(() => {
     const load = async () => {
@@ -791,9 +791,13 @@ function App() {
   }, [availableTags, selection.tag]);
 
   const cumulativeKwh = useMemo(() => {
-    return scopedEnergies
-      .filter(isCumulativeEnergy)
-      .reduce((s, e) => s + Number(e.value || 0), 0);
+    // Compteurs kWh des ÉQUIPEMENTS physiques uniquement : le rollup « Total »
+    // porte déjà la somme de la ligne → l'additionner doublerait le KPI.
+    // Repli sur le rollup si aucun équipement ne publie de kWh.
+    const cumul = scopedEnergies.filter(isCumulativeEnergy);
+    const physical = cumul.filter((e) => !isAggregateRollup(e));
+    const list = physical.length > 0 ? physical : cumul;
+    return list.reduce((s, e) => s + Number(e.value || 0), 0);
   }, [scopedEnergies]);
 
   const consumptionEnergies = useMemo(() => {
@@ -1299,6 +1303,8 @@ function App() {
 
       <ChatbotWidget
         energies={visibleEnergies}
+        allEnergies={allEnergies}
+        backendSummary={backendSummary}
         selectedLineLabel={activeLineLabel}
         urgentCount={urgentCount}
         usersCount={users.length}

@@ -109,19 +109,31 @@ def confidence_score(values):
 def get_realtime_charts(
     line_name: str,
     limit: int = Query(default=30, ge=5, le=100),
+    plant: str | None = Query(default=None),
+    zone: str | None = Query(default=None),
+    equipment: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    records = (
+    # Respecte les filtres Plant / Zone / Équipement / Tag du header :
+    # les courbes temps réel changent selon le périmètre sélectionné.
+    q = (
         db.query(TelemetryRecord)
         .filter(
             TelemetryRecord.production_line == line_name,
             TelemetryRecord.voltage.isnot(None),
             TelemetryRecord.source != "simulator",
         )
-        .order_by(desc(TelemetryRecord.timestamp))
-        .limit(limit)
-        .all()
     )
+    if plant:
+        q = q.filter(TelemetryRecord.plant.ilike(plant))
+    if zone:
+        q = q.filter(TelemetryRecord.area.ilike(zone))
+    if equipment:
+        q = q.filter(TelemetryRecord.equipment.ilike(equipment))
+    if tag:
+        q = q.filter(TelemetryRecord.tags.ilike(f"%{str(tag).strip().lower()}%"))
+    records = q.order_by(desc(TelemetryRecord.timestamp)).limit(limit).all()
     records = list(reversed(records))
 
     voltages = [record.voltage for record in records if record.voltage is not None]

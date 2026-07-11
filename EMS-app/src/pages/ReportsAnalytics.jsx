@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { fetchConversations, uploadChatFile } from "../api/chatApi";
+import { fetchInvoice } from "../api/emsApi";
 import jsPDF from "jspdf";
-import { aggregateByEnergy } from "../utils/energyAggregation.js";
-import html2canvas from "html2canvas";
+import { aggregateByEnergy, isAggregateRollup, groupByEquipment } from "../utils/energyAggregation.js";
 import { svgEventPoint, SvgHoverTooltip } from "../components/ChartTooltip.jsx";
 
 const toMAD = (mad) => `${Number(mad || 0).toFixed(2)} MAD`;
@@ -135,12 +135,125 @@ export default function ReportsAnalytics({
 }) {
   const highestDemand = getHighestDemand(energies);
 
+  // Équipements physiques uniquement (sans rollups zone/ligne) : le rollup
+  // « Total » porte déjà la somme des équipements → l'inclure doublerait
+  // coûts et quantités dans les tableaux, CSV, PDF et cartes de coût.
+  // Un rollup n'est gardé que si son énergie n'existe sur aucun équipement.
+  const physicalList = energies.filter((e) => !isAggregateRollup(e));
+  const physNames = new Set(physicalList.map((e) => String(e.name || "").toLowerCase()));
+  const kpiSource = [
+    ...physicalList,
+    ...energies.filter(
+      (e) => isAggregateRollup(e) && !physNames.has(String(e.name || "").toLowerCase())
+    ),
+  ];
+
   // UNE entrée par énergie (agrégée sur les équipements) — pour le graphe de
   // distribution et sa légende, sinon on affiche 7 barres "Electricity".
   // Triée par valeur décroissante : les énergies actives en premier.
-  const energySummary = aggregateByEnergy(energies).sort(
+  const energySummary = aggregateByEnergy(kpiSource).sort(
     (a, b) => Number(b.value || 0) - Number(a.value || 0)
   );
+
+  // ── FACTURE ÉNERGÉTIQUE : plage de dates + génération PDF ─────────────────
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+  const [invoiceStart, setInvoiceStart] = useState(monthAgo);
+  const [invoiceEnd, setInvoiceEnd] = useState(today);
+  const [invoiceData, setInvoiceData] = useState(null);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const [invoiceError, setInvoiceError] = useState("");
+  const [showInvoice, setShowInvoice] = useState(false); // panneau facture replié par défaut
+
+  const loadInvoice = async () => {
+    setInvoiceLoading(true);
+    setInvoiceError("");
+    try {
+      const data = await fetchInvoice(invoiceStart, invoiceEnd, selectedLineLabel);
+      setInvoiceData(data);
+      return data;
+    } catch (e) {
+      setInvoiceError(e.message || "Failed to load invoice");
+      return null;
+    } finally {
+      setInvoiceLoading(false);
+    }
+  };
+
+  const printInvoice = async () => {
+    const data = invoiceData || (await loadInvoice());
+    if (!data) return;
+
+    const pdf = new jsPDF("p", "mm", "a4");
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const M = 14;
+    let y = 0;
+
+    const need = (n) => { if (y + n > pageH - 16) { pdf.addPage(); y = M; } };
+
+    // En-tête facture
+    pdf.setFillColor(22, 101, 52);
+    pdf.rect(0, 0, pageW, 26, "F");
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(16); pdf.setFont("helvetica", "bold");
+    pdf.text("FACTURE ÉNERGÉTIQUE", M, 11);
+    pdf.setFontSize(9); pdf.setFont("helvetica", "normal");
+    pdf.text(`EMS Al Youssoufia  -  ${data.line}`, M, 18);
+    pdf.text(`Période : ${data.start?.slice(0,10)}  ->  ${data.end?.slice(0,10)}`, M, 23);
+    pdf.text(`Émise le : ${new Date().toLocaleDateString()}`, pageW - M, 18, { align: "right" });
+    y = 36;
+
+    // Montant total
+    pdf.setFillColor(240, 253, 244);
+    pdf.rect(M, y, pageW - 2 * M, 16, "F");
+    pdf.setTextColor(22, 101, 52);
+    pdf.setFontSize(11); pdf.setFont("helvetica", "bold");
+    pdf.text("MONTANT TOTAL À PAYER", M + 3, y + 6);
+    pdf.setFontSize(15);
+    pdf.text(`${Number(data.total_cost || 0).toFixed(2)} MAD`, pageW - M - 3, y + 10, { align: "right" });
+    y += 24;
+
+    const drawTable = (title, rows) => {
+      need(22);
+      pdf.setTextColor(30, 41, 59);
+      pdf.setFontSize(11); pdf.setFont("helvetica", "bold");
+      pdf.text(title, M, y); y += 5;
+      pdf.setFillColor(226, 232, 240);
+      pdf.rect(M, y, pageW - 2 * M, 7, "F");
+      pdf.setFontSize(8);
+      pdf.text("Désignation", M + 2, y + 4.8);
+      pdf.text("Quantité", pageW - M - 55, y + 4.8);
+      pdf.text("Coût (MAD)", pageW - M - 2, y + 4.8, { align: "right" });
+      y += 7;
+      pdf.setFont("helvetica", "normal");
+      (rows || []).forEach((r, i) => {
+        need(6);
+        if (i % 2) { pdf.setFillColor(248, 250, 252); pdf.rect(M, y, pageW - 2 * M, 6, "F"); }
+        pdf.text(String(r.name).slice(0, 42), M + 2, y + 4.2);
+        pdf.text(`${Number(r.quantity).toFixed(1)} ${r.unit || ""}`, pageW - M - 55, y + 4.2);
+        pdf.text(Number(r.cost).toFixed(2), pageW - M - 2, y + 4.2, { align: "right" });
+        y += 6;
+      });
+      y += 8;
+    };
+
+    drawTable("Détail par type d'énergie", data.by_energy);
+    drawTable("Détail par équipement", data.by_equipment);
+    drawTable("Détail par zone", data.by_zone);
+    if ((data.by_line || []).length > 1) drawTable("Détail par ligne de production", data.by_line);
+
+    // Pied
+    const pages = pdf.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) {
+      pdf.setPage(i);
+      pdf.setFontSize(7.5); pdf.setTextColor(120, 130, 150);
+      pdf.text("EMS Al Youssoufia - Tarifs ONEE Maroc", M, pageH - 8);
+      pdf.text(`Page ${i}/${pages}`, pageW - M, pageH - 8, { align: "right" });
+    }
+
+    pdf.save(`Facture_EMS_${data.start?.slice(0,10)}_${data.end?.slice(0,10)}.pdf`);
+  };
 
   const [showShareModal, setShowShareModal] = useState(false);
   const [conversations, setConversations] = useState([]);
@@ -198,7 +311,7 @@ export default function ReportsAnalytics({
       "Timestamp",
     ];
 
-    const dataRows = energies.map((e) => [
+    const dataRows = physicalList.map((e) => [
       e.rawData?.equipment || "—",
       e.rawData?.area || "—",
       e.name,
@@ -213,9 +326,10 @@ export default function ReportsAnalytics({
       e.timestamp ? new Date(e.timestamp).toLocaleString() : "—",
     ]);
 
-    const csv = [...metaRows, headers, ...dataRows]
-      .map((row) => row.map((c) => `"${c}"`).join(","))
-      .join("\n");
+    // "sep=;" indique a Excel le separateur : colonnes parfaitement alignees
+    const csv = ["sep=;", ...[...metaRows, headers, ...dataRows].map((row) =>
+      row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")
+    )].join("\n");
 
     const blob = new Blob(["\uFEFF" + csv], {
       type: "text/csv;charset=utf-8;",
@@ -236,15 +350,17 @@ export default function ReportsAnalytics({
     URL.revokeObjectURL(url);
   };
 
-  const handleExportPDF = () => {
-    const originalTitle = document.title;
-
-    document.title = `EMS_Report_${selectedLineLabel}_${new Date()
-      .toISOString()
-      .slice(0, 10)}`;
-
-    window.print();
-    document.title = originalTitle;
+  const handleExportPDF = async () => {
+    // Telecharge le MEME PDF structure que celui envoye par "Share".
+    const file = await generateReportPdf();
+    const url = URL.createObjectURL(file);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const getConvLabel = (conv) => {
@@ -262,52 +378,137 @@ export default function ReportsAnalytics({
     return `Conversation #${conv.id}`;
   };
 
-  // Genere un vrai PDF visuel de la page Reports & Analytics.
+  // Genere un PDF STRUCTURE et professionnel (tableaux nets, pas une capture
+  // ecran) - utilise PAR LES DEUX : "Export PDF" (telechargement) et "Share"
+  // (envoye au destinataire). Le fichier recu est identique au fichier exporte.
   const generateReportPdf = async () => {
-    const element = document.getElementById("reports-export-root");
-    if (!element) throw new Error("Report content not found");
-
-    const canvas = await html2canvas(element, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: "#ffffff",
-      windowWidth: element.scrollWidth,
-      windowHeight: element.scrollHeight,
-      // On exclut tout ce qui ne doit pas apparaitre dans le PDF :
-      // la modale de partage, les boutons d'action, le chatbot, etc.
-      ignoreElements: (el) =>
-        el.classList?.contains("forgot-modal-overlay") ||
-        el.classList?.contains("no-print") ||
-        el.classList?.contains("chatbot-fab"),
-    });
-
-    const imgData = canvas.toDataURL("image/png");
-
     const pdf = new jsPDF("p", "mm", "a4");
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const M = 14;
+    const now = new Date();
+    let y = 0;
 
-    const imgWidth = pageWidth;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    const newPageIfNeeded = (needed) => {
+      if (y + needed > pageH - 16) {
+        pdf.addPage();
+        y = M;
+      }
+    };
 
-    let heightLeft = imgHeight;
-    let position = 0;
+    pdf.setFillColor(37, 99, 235);
+    pdf.rect(0, 0, pageW, 24, "F");
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(15);
+    pdf.setFont("helvetica", "bold");
+    pdf.text("EMS - Energy Report", M, 10);
+    pdf.setFontSize(9);
+    pdf.setFont("helvetica", "normal");
+    pdf.text(`${selectedLineLabel}  -  Generated: ${now.toLocaleString()}`, M, 17);
+    pdf.text("Al Youssoufia Plant", pageW - M, 17, { align: "right" });
+    y = 33;
 
-    pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-    heightLeft -= pageHeight;
+    pdf.setTextColor(30, 41, 59);
+    pdf.setFontSize(11);
+    pdf.setFont("helvetica", "bold");
+    pdf.text("Key Performance Indicators", M, y);
+    y += 6;
+    pdf.setFontSize(9);
+    const kpiPairs = [
+      ["Operating Cost", `${Number(totalCost || 0).toFixed(2)} MAD`],
+      ["Peak Demand", `${Number(peakKw || 0).toFixed(1)} kW`],
+      ["Total CO2", `${Number(totalCo2 || 0).toFixed(3)} kg`],
+      ["Cumulative Energy", `${Number(cumulativeKwh || 0).toFixed(1)} kWh`],
+    ];
+    kpiPairs.forEach(([label, value], i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const x = M + col * ((pageW - 2 * M) / 2);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(`${label}:`, x, y + row * 6);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(value, x + 42, y + row * 6);
+    });
+    y += 18;
 
-    while (heightLeft > 0) {
-      position -= pageHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
+    const drawTable = (title, headers, rows, widths) => {
+      newPageIfNeeded(24);
+      pdf.setFontSize(11);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(30, 41, 59);
+      pdf.text(title, M, y);
+      y += 5;
+      pdf.setFillColor(226, 232, 240);
+      pdf.rect(M, y, pageW - 2 * M, 7, "F");
+      pdf.setFontSize(8);
+      let hx = M + 2;
+      headers.forEach((h, i) => {
+        pdf.text(String(h), hx, y + 4.8);
+        hx += widths[i];
+      });
+      y += 7;
+      pdf.setFont("helvetica", "normal");
+      rows.forEach((r, ri) => {
+        newPageIfNeeded(7);
+        if (ri % 2 === 1) {
+          pdf.setFillColor(248, 250, 252);
+          pdf.rect(M, y, pageW - 2 * M, 6, "F");
+        }
+        let cx = M + 2;
+        r.forEach((cell, i) => {
+          pdf.text(String(cell).slice(0, 40), cx, y + 4.2);
+          cx += widths[i];
+        });
+        y += 6;
+      });
+      y += 9;
+    };
+
+    drawTable(
+      "Energy Summary - aggregated per energy",
+      ["Energy", "Value", "Unit", "Cost (MAD)", "CO2 (kg)", "Source"],
+      energySummary.slice(0, 15).map((e) => [
+        e.name,
+        Number(e.value || 0).toFixed(2),
+        e.unit || "-",
+        Number(e.cost || 0).toFixed(2),
+        Number(e.co2_kg || 0).toFixed(3),
+        e.equipment || "-",
+      ]),
+      [42, 22, 16, 26, 24, 52]
+    );
+
+    drawTable(
+      "Equipment Detail - latest readings",
+      ["Equipment", "Area", "Energy", "Value", "Unit", "Cost (MAD)"],
+      physicalList.slice(0, 40).map((e) => [
+        e.rawData?.equipment || "-",
+        e.rawData?.area || "-",
+        e.name,
+        Number(e.value || 0).toFixed(2),
+        e.unit || "-",
+        isCO2(e.name) ? "-" : Number(e.cost || 0).toFixed(2),
+      ]),
+      [48, 28, 38, 20, 16, 32]
+    );
+
+    const pages = pdf.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) {
+      pdf.setPage(i);
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(120, 130, 150);
+      pdf.text(
+        `EMS - Energy Management System  -  ${selectedLineLabel}  -  ${now.toLocaleDateString()}`,
+        M,
+        pageH - 8
+      );
+      pdf.text(`Page ${i} / ${pages}`, pageW - M, pageH - 8, { align: "right" });
     }
 
     const blob = pdf.output("blob");
-    const fileName = `EMS_Report_${selectedLineLabel}_${new Date()
+    const fileName = `EMS_Report_${selectedLineLabel.replace(/ /g, "_")}_${now
       .toISOString()
       .slice(0, 10)}.pdf`;
-
     return new File([blob], fileName, { type: "application/pdf" });
   };
 
@@ -356,7 +557,7 @@ export default function ReportsAnalytics({
   const realTotalCost =
     totalCost > 0
       ? totalCost
-      : energies
+      : kpiSource
           .filter((e) => !isCO2(e.name))
           .reduce((s, e) => s + (e.cost || 0), 0);
 
@@ -486,11 +687,114 @@ export default function ReportsAnalytics({
           >
             📤 Share
           </button>
+
+          <button
+            type="button"
+            onClick={() => setShowInvoice((v) => !v)}
+            style={{
+              background: showInvoice ? "#64748b" : "#16a34a",
+              color: "#fff", border: "none", borderRadius: "8px",
+              padding: "0.55rem 1rem", cursor: "pointer", fontWeight: 600, fontSize: "0.85rem",
+            }}
+          >
+            {showInvoice ? "✕ Fermer facture" : "🧾 Facture"}
+          </button>
         </div>
       </div>
 
       {shareSuccess && <div className="info-box">{shareSuccess}</div>}
       {shareError && <div className="alarm-item">{shareError}</div>}
+
+      {/* ── FACTURE ÉNERGÉTIQUE (repliable via le bouton du header) ──────── */}
+      {showInvoice && (
+      <section className="section-block no-print">
+        <div className="panel-card" style={{ borderLeft: "4px solid #16a34a" }}>
+          <div className="panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <h2>🧾 Facture énergétique</h2>
+              <p>Coût des énergies consommées sur une période — {selectedLineLabel}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setShowInvoice(false); setInvoiceData(null); setInvoiceError(""); }}
+              title="Fermer la facture"
+              style={{
+                background: "transparent", border: "1px solid var(--border-color)",
+                borderRadius: "8px", width: 32, height: 32, cursor: "pointer",
+                color: "var(--text-secondary)", fontSize: "1rem", flexShrink: 0,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap", alignItems: "flex-end", marginBottom: "1rem" }}>
+            <div>
+              <label style={{ fontSize: "0.75rem", fontWeight: 600, display: "block", marginBottom: "3px", color: "var(--text-secondary)" }}>Date début</label>
+              <input type="date" value={invoiceStart} max={invoiceEnd}
+                onChange={(e) => setInvoiceStart(e.target.value)}
+                style={{ padding: "0.5rem", borderRadius: "8px", border: "1px solid var(--border-color)", background: "var(--bg-main)", color: "var(--text-main)" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.75rem", fontWeight: 600, display: "block", marginBottom: "3px", color: "var(--text-secondary)" }}>Date fin</label>
+              <input type="date" value={invoiceEnd} min={invoiceStart} max={today}
+                onChange={(e) => setInvoiceEnd(e.target.value)}
+                style={{ padding: "0.5rem", borderRadius: "8px", border: "1px solid var(--border-color)", background: "var(--bg-main)", color: "var(--text-main)" }} />
+            </div>
+            <button type="button" onClick={loadInvoice} disabled={invoiceLoading}
+              style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", padding: "0.55rem 1.1rem", cursor: "pointer", fontWeight: 600 }}>
+              {invoiceLoading ? "…" : "🔍 Calculer"}
+            </button>
+            <button type="button" onClick={printInvoice} disabled={invoiceLoading}
+              style={{ background: "#16a34a", color: "#fff", border: "none", borderRadius: "8px", padding: "0.55rem 1.1rem", cursor: "pointer", fontWeight: 700 }}>
+              🖨️ Imprimer la facture (PDF)
+            </button>
+          </div>
+
+          {invoiceError && <div className="alarm-item">⚠ {invoiceError}</div>}
+
+          {invoiceData && (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                background: "#f0fff4", border: "1px solid #c6f6d5", borderRadius: "10px",
+                padding: "0.8rem 1.2rem", marginBottom: "1rem" }}>
+                <span style={{ fontWeight: 700, color: "#16a34a" }}>MONTANT TOTAL À PAYER</span>
+                <span style={{ fontSize: "1.4rem", fontWeight: 800, color: "#16a34a" }}>
+                  {Number(invoiceData.total_cost || 0).toFixed(2)} MAD
+                </span>
+              </div>
+
+              <div className="two-column-layout" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                {[
+                  { title: "Par énergie", rows: invoiceData.by_energy },
+                  { title: "Par équipement", rows: invoiceData.by_equipment },
+                  { title: "Par zone", rows: invoiceData.by_zone },
+                  { title: "Par ligne", rows: invoiceData.by_line },
+                ].map((b) => (
+                  <div key={b.title} className="table-card">
+                    <div className="section-title-wrap"><h3 style={{ fontSize: "0.9rem" }}>{b.title}</h3></div>
+                    <table>
+                      <thead><tr><th>Désignation</th><th style={{ textAlign: "right" }}>Coût (MAD)</th></tr></thead>
+                      <tbody>
+                        {(b.rows || []).slice(0, 10).map((r) => (
+                          <tr key={r.name}>
+                            <td>{r.name}</td>
+                            <td style={{ textAlign: "right", fontWeight: 600, color: "#16a34a" }}>{Number(r.cost).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                        {(!b.rows || b.rows.length === 0) && (
+                          <tr><td colSpan="2" style={{ textAlign: "center", color: "var(--text-secondary)" }}>Aucune donnée facturable</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+      )}
 
       <section className="section-block">
         <div className="section-title-wrap">
@@ -502,7 +806,6 @@ export default function ReportsAnalytics({
           <div className="carbon-card">
             <h4>Current Operating Cost</h4>
             <strong style={{ color: "#d69e2e" }}>{toMAD(realTotalCost)}</strong>
-            <span>Same value used in Dashboard</span>
           </div>
 
           <div className="carbon-card">
@@ -569,7 +872,6 @@ export default function ReportsAnalytics({
           <div className="carbon-card">
             <h4>Efficiency Score</h4>
             <strong style={{ color: scoreColor }}>{efficiencyScore}%</strong>
-            <span>Based on PF, voltage, demand</span>
           </div>
 
           <div className="carbon-card">
@@ -583,7 +885,7 @@ export default function ReportsAnalytics({
       <section className="section-block">
         <div className="section-title-wrap">
           <h2>Detailed Energy Report</h2>
-          <p>All measurements — {selectedLineLabel}</p>
+          <p>One row per equipment — {selectedLineLabel}</p>
         </div>
 
         <div className="table-card">
@@ -591,11 +893,10 @@ export default function ReportsAnalytics({
             <thead>
               <tr>
                 <th>Equipment</th>
-                <th>Area</th>
-                <th>Energy</th>
-                <th>Value</th>
-                <th>Forecast +1h</th>
-                <th>Unit</th>
+                <th>Zone</th>
+                <th>Power (kW)</th>
+                <th>Energy (kWh)</th>
+                <th>Main Measure</th>
                 <th>Voltage</th>
                 <th>Power Factor</th>
                 <th>Cost (MAD)</th>
@@ -606,83 +907,72 @@ export default function ReportsAnalytics({
             </thead>
 
             <tbody>
+              {/* UNE ligne par équipement physique : coût/CO₂ = somme de
+                  toutes ses mesures facturables (eau, fuel, vapeur incluses) */}
               {energies.length > 0 ? (
-                energies.map((e) => {
-                  const ratio = (e.value / (e.max || 500)) * 100;
-                  const status = ratio >= 85 ? "High" : ratio <= 10 ? "Low" : "Normal";
-                  const sc = { High: "#e53e3e", Low: "#888", Normal: "#38a169" }[
-                    status
-                  ];
+                groupByEquipment(energies).map((eq) => {
+                  const st =
+                    eq.kw != null
+                      ? eq.kw > 1
+                        ? { label: "Running", color: "#38a169" }
+                        : eq.kw > 0.1
+                        ? { label: "Standby", color: "#d69e2e" }
+                        : { label: "Off", color: "#e53e3e" }
+                      : eq.primary
+                      ? eq.primary.value > 0
+                        ? { label: "Active", color: "#38a169" }
+                        : { label: "Idle", color: "#d69e2e" }
+                      : eq.kwh != null
+                      ? { label: "Metering", color: "#38a169" }
+                      : { label: "Unknown", color: "#888" };
 
                   return (
-                    <tr key={e.id}>
+                    <tr key={eq.name}>
+                      <td><strong>{eq.name}</strong></td>
+                      <td>{eq.area}</td>
+                      <td>{eq.kw != null ? <strong>{eq.kw.toFixed(2)}</strong> : "—"}</td>
+                      <td>{eq.kwh != null ? eq.kwh.toFixed(2) : "—"}</td>
                       <td>
-                        <strong>{e.rawData?.equipment || "—"}</strong>
+                        {eq.primary
+                          ? `${eq.primary.value.toFixed(1)} ${eq.primary.unit} · ${eq.primary.name}`
+                          : "—"}
                       </td>
-                      <td>{e.rawData?.area || "—"}</td>
-                      <td>{e.name}</td>
                       <td>
-                        <strong>{e.value.toFixed(2)}</strong>
-                      </td>
-                      <td style={{ color: "#4299e1" }}>
-                        {forecast(e.value, e.step || 5)}
-                      </td>
-                      <td>{e.unit}</td>
-                      <td>
-                        {e.rawData?.voltage != null ? (
-                          <span
-                            style={{
-                              color:
-                                Number(e.rawData.voltage) >= 210
-                                  ? "#38a169"
-                                  : "#e53e3e",
-                            }}
-                          >
-                            {Number(e.rawData.voltage).toFixed(1)} V
+                        {eq.voltage != null ? (
+                          <span style={{ color: eq.voltage >= 210 ? "#38a169" : "#e53e3e" }}>
+                            {eq.voltage.toFixed(1)} V
                           </span>
                         ) : (
                           "—"
                         )}
                       </td>
                       <td>
-                        {e.rawData?.power_factor != null ? (
-                          <span
-                            style={{
-                              color:
-                                e.rawData.power_factor >= 0.9
-                                  ? "#38a169"
-                                  : "#e53e3e",
-                            }}
-                          >
-                            {Number(e.rawData.power_factor).toFixed(3)}
+                        {eq.power_factor != null ? (
+                          <span style={{ color: eq.power_factor >= 0.9 ? "#38a169" : "#e53e3e" }}>
+                            {eq.power_factor.toFixed(3)}
                           </span>
                         ) : (
                           "—"
                         )}
                       </td>
-                      <td
-                        style={{
-                          color: isCO2(e.name) ? "#94a3b8" : "#d69e2e",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {isCO2(e.name) ? "—" : toMAD(e.cost || 0)}
+                      <td style={{ color: "#d69e2e", fontWeight: 600 }}>
+                        {toMAD(eq.cost || 0)}
                       </td>
                       <td style={{ color: "#38a169" }}>
-                        {Number(e.co2_kg || 0).toFixed(3)}
+                        {Number(eq.co2 || 0).toFixed(3)}
                       </td>
                       <td>
-                        <span style={{ color: sc }}>{status}</span>
+                        <span style={{ color: st.color }}><strong>{st.label}</strong></span>
                       </td>
                       <td style={{ fontSize: "0.78rem", color: "#888" }}>
-                        {e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : "—"}
+                        {eq.timestamp ? new Date(eq.timestamp).toLocaleTimeString() : "—"}
                       </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan="12" style={{ textAlign: "center", color: "#888" }}>
+                  <td colSpan="11" style={{ textAlign: "center", color: "#888" }}>
                     No data — make sure DataPlatform is running.
                   </td>
                 </tr>
@@ -797,11 +1087,13 @@ export default function ReportsAnalytics({
         </div>
 
         <div className="carbon-kpis">
-          {energies.filter((e) => !isCO2(e.name)).length > 0 ? (
-            energies
-              .filter((e) => !isCO2(e.name))
+          {/* UNE carte par énergie FACTURABLE, coût agrégé sur tous les
+              équipements (Water et Fuel ne restent plus à 0) */}
+          {energySummary.filter((e) => !isCO2(e.name) && Number(e.cost || 0) > 0).length > 0 ? (
+            energySummary
+              .filter((e) => !isCO2(e.name) && Number(e.cost || 0) > 0)
               .map((e) => (
-                <div className="carbon-card" key={e.id}>
+                <div className="carbon-card" key={`${e.name}-${e.unit}`}>
                   <h4>{e.name}</h4>
                   <strong style={{ color: "#d69e2e" }}>
                     {toMAD(e.cost || 0)}
@@ -818,7 +1110,7 @@ export default function ReportsAnalytics({
                     }}
                   >
                     CO₂: {Number(e.co2_kg || 0).toFixed(3)} kg
-                    {e.rawData?.equipment && ` · ${e.rawData.equipment}`}
+                    {e.equipment && ` · ${e.equipment}`}
                   </span>
                 </div>
               ))

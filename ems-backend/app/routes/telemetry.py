@@ -8,12 +8,26 @@ from app.core.deps import get_current_active_user
 from app.db import get_db
 from app.models import TelemetryRecord
 from app.schemas import TelemetryOut
-from app.utils import build_dashboard_summary, calculate_cost, calculate_co2, CO2_FACTOR_KG_PER_KWH
+from app.utils import build_dashboard_summary, calculate_cost, calculate_co2, CO2_FACTOR_KG_PER_KWH, is_aggregate_rollup
 
 # Toutes les routes de ce routeur exigent une authentification.
 # (le /api/health public reste defini dans main.py)
 router = APIRouter(prefix="/api", tags=["telemetry"],
                    dependencies=[Depends(get_current_active_user)])
+
+
+def apply_context_filters(q, plant=None, zone=None, equipment=None, tag=None):
+    """Filtres Plant / Zone / Équipement / Tag — pour que TOUTES les pages
+    (graphes compris) réagissent aux filtres du header."""
+    if plant:
+        q = q.filter(TelemetryRecord.plant.ilike(plant))
+    if zone:
+        q = q.filter(TelemetryRecord.area.ilike(zone))
+    if equipment:
+        q = q.filter(TelemetryRecord.equipment.ilike(equipment))
+    if tag:
+        q = q.filter(TelemetryRecord.tags.ilike(f"%{str(tag).strip().lower()}%"))
+    return q
 
 
 @router.get("/telemetry", response_model=list[TelemetryOut])
@@ -58,15 +72,25 @@ def get_structure(db: Session = Depends(get_db)):
         return db.query(distinct(column)).filter(TelemetryRecord.timestamp >= cutoff)
 
     lines       = [r[0] for r in recent(TelemetryRecord.production_line).all() if r[0]]
-    equipment   = [r[0] for r in recent(TelemetryRecord.equipment).all()        if r[0]]
     energy_types= [r[0] for r in recent(TelemetryRecord.energy_name).all()      if r[0]]
-    areas       = [r[0] for r in recent(TelemetryRecord.area).all()              if r[0]]
     plants      = [r[0] for r in recent(TelemetryRecord.plant).all()             if r[0]]
     raw_tags    = [r[0] for r in recent(TelemetryRecord.tags).all()              if r[0]]
     tags = sorted({t.strip() for row in raw_tags for t in str(row).split(",") if t.strip()})
+
+    # Zones + équipements dérivés des paires (zone, équipement) en EXCLUANT les
+    # rollups d'agrégation → 12 équipements / 5 zones cohérents avec les cartes.
+    pair_rows = (
+        db.query(TelemetryRecord.area, TelemetryRecord.equipment)
+        .filter(TelemetryRecord.timestamp >= cutoff)
+        .distinct().all()
+    )
+    real_pairs = [(a, e) for (a, e) in pair_rows if a and e and not is_aggregate_rollup(a, e)]
+    areas     = sorted({a for (a, _) in real_pairs})
+    equipment = sorted({e for (_, e) in real_pairs})
+
     return {
-        "lines": sorted(lines), "equipment": sorted(equipment),
-        "energy_types": sorted(energy_types), "areas": sorted(areas),
+        "lines": sorted(lines), "equipment": equipment,
+        "energy_types": sorted(energy_types), "areas": areas,
         "plants": sorted(plants), "tags": tags, "has_data": len(lines) > 0,
     }
 
@@ -106,6 +130,7 @@ def get_equipment_list(db: Session = Depends(get_db)):
             "last_seen": r.last_seen.isoformat() if r.last_seen else None,
         }
         for r in rows
+        if not is_aggregate_rollup(r.area, r.equipment)   # exclut les rollups zone/ligne
     ]
 
 
@@ -130,12 +155,21 @@ def get_line_history(line_name: str, limit: int = Query(default=100, ge=1, le=50
 
 
 @router.get("/telemetry/power-quality/{line_name}")
-def get_power_quality_history(line_name: str, limit: int = Query(default=48, ge=1, le=200), db: Session = Depends(get_db)):
-    records = (
+def get_power_quality_history(
+    line_name: str,
+    limit: int = Query(default=48, ge=1, le=200),
+    plant: str | None = Query(default=None),
+    zone: str | None = Query(default=None),
+    equipment: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    q = (
         db.query(TelemetryRecord)
         .filter(TelemetryRecord.production_line == line_name, TelemetryRecord.voltage.isnot(None))
-        .order_by(desc(TelemetryRecord.timestamp)).limit(limit).all()
     )
+    q = apply_context_filters(q, plant=plant, zone=zone, equipment=equipment, tag=tag)
+    records = q.order_by(desc(TelemetryRecord.timestamp)).limit(limit).all()
     return [{"timestamp": r.timestamp.isoformat(), "voltage": r.voltage,
              "power_factor": r.power_factor,
              "frequency": r.frequency if r.frequency is not None else 50.0,
@@ -146,39 +180,50 @@ def get_power_quality_history(line_name: str, limit: int = Query(default=48, ge=
 
 
 @router.get("/telemetry/carbon/{line_name}")
-def get_carbon_history(line_name: str, limit: int = Query(default=48, ge=1, le=200), db: Session = Depends(get_db)):
+def get_carbon_history(
+    line_name: str,
+    limit: int = Query(default=48, ge=1, le=200),
+    plant: str | None = Query(default=None),
+    zone: str | None = Query(default=None),
+    equipment: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
     """
     Retourne l'historique CO2 pour une ligne.
     Priorité: mesures CO2 directes depuis DataPlatform (energy_name CO2-Emissions)
     Fallback: calcul depuis kWh × 0.718
+    Respecte les filtres Plant / Zone / Équipement / Tag du header.
     """
     # D'abord chercher les mesures CO2 directes
-    co2_records = (
+    q = (
         db.query(TelemetryRecord)
         .filter(
             TelemetryRecord.production_line == line_name,
             TelemetryRecord.energy_name.ilike("%co2%"),
         )
-        .order_by(desc(TelemetryRecord.timestamp)).limit(limit).all()
     )
+    q = apply_context_filters(q, plant=plant, zone=zone, equipment=equipment, tag=tag)
+    co2_records = q.order_by(desc(TelemetryRecord.timestamp)).limit(limit).all()
     # Si pas de mesures CO2 directes, calculer depuis kWh
     if not co2_records:
-        co2_records = (
+        q = (
             db.query(TelemetryRecord)
             .filter(TelemetryRecord.production_line == line_name, TelemetryRecord.unit == "kWh")
-            .order_by(desc(TelemetryRecord.timestamp)).limit(limit).all()
         )
+        q = apply_context_filters(q, plant=plant, zone=zone, equipment=equipment, tag=tag)
+        co2_records = q.order_by(desc(TelemetryRecord.timestamp)).limit(limit).all()
         return [{
             "timestamp": r.timestamp.isoformat(),
             "co2_kg": round(r.value * CO2_FACTOR_KG_PER_KWH, 3),
-            "kwh": r.value, "equipment": r.equipment, "unit_name": r.unit_name,
+            "kwh": r.value, "equipment": r.equipment, "area": r.area, "unit_name": r.unit_name,
             "source": "calculated",
         } for r in reversed(co2_records)]
     else:
         return [{
             "timestamp": r.timestamp.isoformat(),
             "co2_kg": round(r.value, 3),
-            "kwh": None, "equipment": r.equipment, "unit_name": r.unit_name,
+            "kwh": None, "equipment": r.equipment, "area": r.area, "unit_name": r.unit_name,
             "source": "direct",
         } for r in reversed(co2_records)]
 

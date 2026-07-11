@@ -11,6 +11,18 @@ from collections import defaultdict
 # sans toucher au code. Défaut : facteur ONEE Maroc.
 CO2_FACTOR_KG_PER_KWH = float(os.getenv("CO2_FACTOR_KG_PER_KWH", "0.718"))
 
+
+def is_aggregate_rollup(area, equipment) -> bool:
+    """Un enregistrement est un ROLLUP d'agrégation (PAS un équipement physique)
+    si sa zone est « Line Total » (total de ligne : Total, Total water
+    consumption) OU si l'équipement porte le nom de sa zone (total de zone :
+    Extraction, Washing…). On les exclut des listes équipements/zones ET des
+    totaux facturés (sinon DOUBLE COMPTAGE : le rollup = déjà la somme des
+    équipements). Leurs valeurs restent utilisées pour les KPI agrégés."""
+    a = (area or "").strip().lower()
+    e = (equipment or "").strip().lower()
+    return a == "line total" or (e != "" and e == a)
+
 ENERGY_RATES_MASTER = {
     "electricity": 1.40,
     "electricity-kwh": 1.40,
@@ -296,6 +308,14 @@ def build_dashboard_summary(records):
         }
     )
 
+    # Énergies portées par de VRAIS équipements, par ligne : les rollups
+    # (Total / totaux de zone) ne comptent dans les totaux que si l'énergie
+    # n'existe sur aucun équipement — sinon DOUBLE COMPTAGE des coûts/CO₂.
+    physical_names = defaultdict(set)
+    for _, r in latest.items():
+        if not is_aggregate_rollup(getattr(r, "area", None), getattr(r, "equipment", None)):
+            physical_names[r.production_line].add(r.energy_name)
+
     for _, record in latest.items():
         cost = calculate_cost(record.energy_name, record.value)
         co2_kg = calculate_co2(record.energy_name, record.value, record.unit)
@@ -323,8 +343,12 @@ def build_dashboard_summary(records):
             }
         )
 
-        grouped[record.production_line]["total_cost"] += cost
-        grouped[record.production_line]["total_co2_kg"] += co2_kg
+        is_rollup = is_aggregate_rollup(
+            getattr(record, "area", None), getattr(record, "equipment", None)
+        )
+        if not is_rollup or record.energy_name not in physical_names[record.production_line]:
+            grouped[record.production_line]["total_cost"] += cost
+            grouped[record.production_line]["total_co2_kg"] += co2_kg
 
         if record.unit == "kW" and record.value > grouped[record.production_line]["peak_kw"]:
             grouped[record.production_line]["peak_kw"] = record.value

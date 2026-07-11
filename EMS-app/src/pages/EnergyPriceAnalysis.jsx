@@ -94,9 +94,17 @@ export default function EnergyPriceAnalysis({
   peakKw            = 0,
   cumulativeKwh     = 0,
 }) {
-  const [dailyKwh,    setDailyKwh]    = useState("500");
+  // Amorçage sur la VRAIE consommation cumulée (DataPlatform) ; l'utilisateur
+  // peut ensuite ajuster pour simuler d'autres scénarios tarifaires.
+  const [dailyKwh,    setDailyKwh]    = useState(
+    () => (Number(cumulativeKwh) > 0 ? String(Math.round(Number(cumulativeKwh))) : "500")
+  );
   const [selectedDay, setSelectedDay] = useState("weekday");
 
+  // Profil de charge horaire TYPIQUE (industrie continue) — sert UNIQUEMENT à
+  // répartir la consommation réelle sur 24 h pour la simulation tarifaire ONEE
+  // (la DataPlatform ne fournit pas de découpage horaire sur 24 h). Ce n'est
+  // pas une mesure : c'est une hypothèse de répartition, clairement affichée.
   const consumptionProfile = {
     weekday: [3, 2, 2, 2, 2, 3, 5, 7, 6, 6, 6, 6, 5, 5, 6, 6, 6, 5, 5, 6, 5, 4, 3, 2],
     weekend: [2, 2, 2, 2, 2, 2, 3, 4, 5, 6, 7, 7, 6, 6, 5, 5, 5, 5, 5, 5, 4, 3, 3, 2],
@@ -146,7 +154,7 @@ export default function EnergyPriceAnalysis({
         <div>
           <h1>Energy Price Analysis</h1>
           <p className="page-subtitle">
-            ONEE Morocco tariff — Peak / Full / Off-peak · All prices in <strong>MAD</strong> · {selectedLineLabel}
+            · {selectedLineLabel}
           </p>
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -274,27 +282,23 @@ export default function EnergyPriceAnalysis({
           <div className="carbon-card">
             <h4>📊 Average Rate</h4>
             <strong style={{ color: "#4299e1" }}>{avgRate.toFixed(4)} MAD/kWh</strong>
-            <span>Blended ONEE tariff</span>
           </div>
           <div className="carbon-card">
             <h4>🌱 Daily CO₂</h4>
             <strong style={{ color: "#38a169" }}>{totalCo2.toFixed(2)} kg</strong>
-            <span>× 0.718 kgCO₂/kWh ONEE</span>
+            <span>× 0.718 kgCO₂/kWh </span>
           </div>
           <div className="carbon-card">
             <h4>💡 Savings Potential</h4>
             <strong style={{ color: "#276749" }}>{savingIfShift.toFixed(2)} MAD</strong>
-            <span>If peak loads → off-peak</span>
           </div>
           <div className="carbon-card">
             <h4>⚡ Best Hour</h4>
             <strong style={{ color: "#38a169" }}>{formatHour(bestHour.hour)}</strong>
-            <span>{ONEE_TARIFFS.offPeak.rate} MAD/kWh — Off-peak</span>
           </div>
           <div className="carbon-card">
             <h4>⚠️ Most Expensive</h4>
             <strong style={{ color: "#e53e3e" }}>{formatHour(worstHour.hour)}</strong>
-            <span>{ONEE_TARIFFS.peak.rate} MAD/kWh — Peak</span>
           </div>
         </div>
       </section>
@@ -404,7 +408,7 @@ export default function EnergyPriceAnalysis({
 
       {/* Recommandations */}
       <section className="section-block">
-        <div className="section-title-wrap"><h2>⚡ Optimization Recommendations</h2><p>Based on ONEE tariff analysis</p></div>
+        <div className="section-title-wrap"><h2>⚡ Optimization Recommendations</h2></div>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
           {[
             {

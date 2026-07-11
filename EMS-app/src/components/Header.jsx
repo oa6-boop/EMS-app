@@ -54,6 +54,7 @@ export default function Header({
 }) {
   const [time, setTime] = useState(new Date());
   const [panel, setPanel] = useState(null); // "location" | "energy"
+  const [locSearch, setLocSearch] = useState(""); // recherche dans le filtre localisation
   const [isDark, setIsDark] = useState(
     () => localStorage.getItem("ems_dark_mode") === "true"
   );
@@ -110,8 +111,37 @@ export default function Header({
     return set.size;
   }, [structure, plant, line, zone]);
 
+  // Index de recherche global : lignes, zones et équipements — recherche par
+  // nom directement dans le filtre localisation, sans dérouler la hiérarchie.
+  const searchIndex = useMemo(() => {
+    const items = [];
+    structure.forEach((p) => {
+      p.lines.forEach((l) => {
+        items.push({ type: "Line", label: l.line, path: p.plant,
+          sel: { plant: p.plant, line: l.line, zone: "", equipment: "", tag: "" } });
+        l.zones.forEach((z) => {
+          items.push({ type: "Zone", label: z.zone, path: l.line,
+            sel: { plant: p.plant, line: l.line, zone: z.zone, equipment: "", tag: "" } });
+          z.equipment.forEach((e) => {
+            items.push({ type: "Equipment", label: e, path: `${l.line} · ${z.zone}`,
+              sel: { plant: p.plant, line: l.line, zone: z.zone, equipment: e, tag: "" } });
+          });
+        });
+      });
+    });
+    return items;
+  }, [structure]);
+
+  const searchResults = useMemo(() => {
+    const q = locSearch.trim().toLowerCase();
+    if (!q) return [];
+    return searchIndex
+      .filter((it) => it.label.toLowerCase().includes(q))
+      .slice(0, 20);
+  }, [locSearch, searchIndex]);
+
   const toggle = (name) => setPanel((p) => (p === name ? null : name));
-  const close = () => setPanel(null);
+  const close = () => { setPanel(null); setLocSearch(""); };
 
   const initials = user
     ? `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase()
@@ -180,6 +210,53 @@ export default function Header({
 
           {panel === "location" && (
             <DropPanel title="Location Filters" onClose={close}>
+              {/* BARRE DE RECHERCHE : ligne, zone ou équipement par nom */}
+              <div style={{ marginBottom: "0.8rem" }}>
+                <input
+                  type="text"
+                  autoFocus
+                  value={locSearch}
+                  onChange={(e) => setLocSearch(e.target.value)}
+                  placeholder="🔍 Search line, zone or equipment…"
+                  style={{
+                    width: "100%", padding: "0.5rem 0.7rem", borderRadius: "10px",
+                    border: "1px solid var(--border-color)", background: "var(--bg-main)",
+                    color: "var(--text-main)", fontSize: "0.85rem", outline: "none",
+                  }}
+                />
+                {searchResults.length > 0 && (
+                  <div className="filter-option-list" style={{ marginTop: "0.4rem", maxHeight: 230, overflowY: "auto" }}>
+                    {searchResults.map((it, i) => (
+                      <button
+                        key={`${it.type}-${it.label}-${i}`}
+                        type="button"
+                        onClick={() => { onSelectionChange?.(it.sel); setLocSearch(""); }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: "8px", width: "100%",
+                          textAlign: "left", padding: "6px 8px", borderRadius: "8px",
+                          border: "none", background: "transparent", cursor: "pointer",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-main)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <span style={{
+                          fontSize: "0.62rem", fontWeight: 700, padding: "1px 6px",
+                          borderRadius: "999px", color: "#2563eb", background: "#eff6ff",
+                          flexShrink: 0,
+                        }}>{it.type}</span>
+                        <span style={{ fontSize: "0.85rem", color: "var(--text-main)", fontWeight: 600 }}>{it.label}</span>
+                        <span style={{ fontSize: "0.7rem", color: "var(--text-secondary)", marginLeft: "auto" }}>{it.path}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {locSearch && searchResults.length === 0 && (
+                  <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: "0.4rem" }}>
+                    No match for “{locSearch}”.
+                  </p>
+                )}
+              </div>
+
               {/* 1. PLANT */}
               <div style={{ marginBottom: "0.8rem" }}>
                 <SectionTitle>1. Plant</SectionTitle>

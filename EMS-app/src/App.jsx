@@ -61,6 +61,8 @@ const PAGES_BY_ROLE = {
     "carbon",
     "forecasting",
     "reports",
+        "thresholds",
+
     "alarms",
     "history",
     "maintenance",
@@ -69,7 +71,6 @@ const PAGES_BY_ROLE = {
     "messages",
     "profile",
     "users",
-    "thresholds",
     "urgent",
     "audit",
     "sld",
@@ -89,9 +90,10 @@ const PAGES_BY_ROLE = {
     "realtime",
     "equipment",
     "power",
+        "thresholds",
+
     "alarms",
     "history",
-    "thresholds",
     "maintenance",
     "weather",
     "messages",
@@ -124,6 +126,7 @@ const VALID_PAGES = [
   "carbon",
   "forecasting",
   "reports",
+    "thresholds",
   "alarms",
   "weather",
   "profile",
@@ -132,7 +135,6 @@ const VALID_PAGES = [
   "audit",
   "messages",
   "history",
-  "thresholds",
   "maintenance",
   "prices",
   "sld",
@@ -408,17 +410,55 @@ function App() {
     return () => clearInterval(intervalId);
   }, []);
 
+  // ── Barrière « plateforme en marche » ───────────────────────────────────────
+  // Le process est considéré ACTIF seulement s'il y a une activité électrique
+  // réelle dans les données (au moins un kW > 0 ou une tension > 0). Tant que
+  // le simulateur/process n'est pas lancé, on n'affiche RIEN : pas de reliquats
+  // de compteurs (vapeur, fuel, coût…) d'une session précédente. Dès que les
+  // données arrivent, tout apparaît automatiquement.
+  const platformLive = useMemo(() => {
+    return Object.values(backendSummary || {}).some((line) =>
+      (line?.energies || []).some(
+        (e) =>
+          (e.unit === "kW" && Number(e.value) > 0) ||
+          Number(e.voltage || 0) > 0
+      )
+    );
+  }, [backendSummary]);
+
+  const liveSummary = useMemo(
+    () => (platformLive ? backendSummary : {}),
+    [platformLive, backendSummary]
+  );
+
   const allEnergies = useMemo(() => {
     const out = [];
 
-    Object.entries(backendSummary).forEach(([lineLabel, lineData]) => {
+    Object.entries(liveSummary).forEach(([lineLabel, lineData]) => {
       convertEnergies(lineData?.energies || [], lineLabel).forEach((e) => out.push(e));
     });
 
     return out;
-  }, [backendSummary]);
+  }, [liveSummary]);
 
   const structure = useMemo(() => buildStructure(allEnergies), [allEnergies]);
+
+  // Index de TOUS les tags (dont l'ID TimescaleDB de chaque équipement,
+  // ex. l1_extr_bw) → recherche par tag dans le filtre localisation.
+  const tagIndex = useMemo(() => {
+    const map = new Map();
+    allEnergies.forEach((e) => {
+      (e.tags || []).forEach((t) => {
+        if (!map.has(t)) {
+          map.set(t, {
+            tag: t, plant: e.plant, line: e.line,
+            zone: e.zone, equipment: e.equipment,
+          });
+        }
+      });
+    });
+    return [...map.values()];
+  }, [allEnergies]);
 
   useEffect(() => {
     if (
@@ -1021,7 +1061,8 @@ function App() {
     cumulativeKwh,
     avgVoltage: displayedAvgVoltage,
     avgPowerFactor: displayedAvgPowerFactor,
-    backendSummary,
+    backendSummary: liveSummary,
+    platformLive,
     userRole: user?.role || "",
   };
 
@@ -1045,7 +1086,7 @@ function App() {
             data={visibleData}
             energies={visibleEnergies}
             selectedLineLabel={activeLineLabel}
-            powerQualityHistory={powerQualityHistory}
+            powerQualityHistory={platformLive ? powerQualityHistory : []}
             {...shared}
           />
         );
@@ -1068,8 +1109,9 @@ function App() {
         return (
           <PowerQuality
             data={visibleData}
-            powerQualityHistory={powerQualityHistory}
+            powerQualityHistory={platformLive ? powerQualityHistory : []}
             selectedLineLabel={activeLineLabel}
+            platformLive={platformLive}
           />
         );
 
@@ -1077,8 +1119,8 @@ function App() {
         return (
           <CarbonEmissions
             energies={visibleEnergies}
-            carbonHistory={carbonHistory}
-            totalCo2={displayedTotalCo2}
+            carbonHistory={platformLive ? carbonHistory : []}
+            totalCo2={platformLive ? displayedTotalCo2 : 0}
             selectedLineLabel={activeLineLabel}
           />
         );
@@ -1088,6 +1130,7 @@ function App() {
           <Forecasting
             energies={visibleEnergies}
             selectedLineLabel={activeLineLabel}
+            platformLive={platformLive}
           />
         );
 
@@ -1256,6 +1299,7 @@ function App() {
           onProfileClick={() => setActivePage("profile")}
           onWeatherClick={() => setActivePage("weather")}
           structure={structure}
+          tagIndex={tagIndex}
           selection={selection}
           onSelectionChange={setSelection}
           energyOptions={availableNames}
@@ -1304,7 +1348,7 @@ function App() {
       <ChatbotWidget
         energies={visibleEnergies}
         allEnergies={allEnergies}
-        backendSummary={backendSummary}
+        backendSummary={liveSummary}
         selectedLineLabel={activeLineLabel}
         urgentCount={urgentCount}
         usersCount={users.length}

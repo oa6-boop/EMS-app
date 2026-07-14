@@ -182,6 +182,7 @@ export default function RealTimeMonitoring({
   selectedZone        = "all",
   selectedEquipment   = "all",
   selectedTag         = "",
+  platformLive        = true,
 }) {
   const [chartData,     setChartData]     = useState(() => getCached("rtm_chart", null));
   useEffect(() => { setCached("rtm_chart", chartData); }, [chartData]);
@@ -218,6 +219,26 @@ export default function RealTimeMonitoring({
     e.name?.toLowerCase().includes("electric") && e.unit === "kW"
   );
   const totalKw = electricEnergies.reduce((s, e) => s + (e.value || 0), 0);
+
+  // Barrière démo : process à l'arrêt → aucune courbe/valeur historique,
+  // la page attend proprement les données réelles.
+  if (!platformLive) {
+    return (
+      <div className="overview-page">
+        <div className="section-title-wrap">
+          <h1>Real-Time Monitoring</h1>
+          <p>Live electrical measurements — {selectedLineLabel}</p>
+        </div>
+        <div style={{ textAlign: "center", padding: "3rem", color: "#888",
+          background: "var(--bg-card)", borderRadius: "12px",
+          border: "1px solid var(--border-color)" }}>
+          <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>⏳</div>
+          <h4>Waiting for DataPlatform data…</h4>
+          <p style={{ marginTop: "0.5rem" }}>Start the process to see live measurements.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="overview-page">

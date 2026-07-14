@@ -17,6 +17,8 @@ const ROLE_PAGES = {
     { key: "carbon",      label: "Carbon Emissions",     icon: Leaf            },
     { key: "forecasting", label: "Forecasting",          icon: TrendingUp      },
     { key: "reports",     label: "Reports & Analytics",  icon: FileText        },
+        { key: "thresholds",  label: "Alarm Thresholds",     icon: SlidersHorizontal },
+
     { key: "alarms",      label: "Alarms & Events",      icon: AlertTriangle,  badge: "alarm" },
     { key: "sld",         label: "SLD Monitoring",       icon: Network         },
     { key: "history",     label: "Historical Data",      icon: History         },
@@ -26,7 +28,6 @@ const ROLE_PAGES = {
     { key: "messages",    label: "Messages",             icon: MessagesSquare, badge: "message" },
     { key: "profile",     label: "My Profile",           icon: UserCircle2     },
     { key: "users",       label: "Users Management",     icon: Users           },
-    { key: "thresholds",  label: "Alarm Thresholds",     icon: SlidersHorizontal },
     { key: "urgent",      label: "Urgent Messages",      icon: BellRing,       badge: "urgent" },
     { key: "audit",       label: "Audit Logs",           icon: ClipboardList   },
   ],
@@ -45,9 +46,10 @@ const ROLE_PAGES = {
     { key: "realtime",    label: "Real-Time Monitoring", icon: Activity        },
     { key: "equipment",   label: "Equipment Status",     icon: Settings        },
     { key: "power",       label: "Power Quality",        icon: Bolt            },
+        { key: "thresholds",  label: "Alarm Thresholds",     icon: SlidersHorizontal },
+
     { key: "alarms",      label: "Alarms & Events",      icon: AlertTriangle,  badge: "alarm" },
     { key: "history",     label: "Historical Data",      icon: History         },
-    { key: "thresholds",  label: "Alarm Thresholds",     icon: SlidersHorizontal },
     { key: "maintenance", label: "Maintenance",          icon: Wrench,         badge: "intervention" },
     { key: "weather",     label: "Weather",              icon: CloudSun        },
     { key: "messages",    label: "Messages",             icon: MessagesSquare, badge: "message" },

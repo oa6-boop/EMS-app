@@ -222,7 +222,7 @@ function buildLatestKpis(energies = []) {
     });
 }
 
-function SECCalculator({ selectedLineLabel, energies = [] }) {
+function SECCalculator({ selectedLineLabel, energies = [], fallbackProductionRate = 0 }) {
   // SEC industriel = énergie consommée PAR TONNE de phosphate produite.
   // Calcul temps réel avec les débits de la DataPlatform :
   //   kW ÷ (t/h) = kWh/t · vapeur (t/h) ÷ (t/h) = t/t · fuel (L/h) ÷ (t/h) = L/t
@@ -231,7 +231,11 @@ function SECCalculator({ selectedLineLabel, energies = [] }) {
   const sumBy = (predicate) =>
     energies.filter(predicate).reduce((s, e) => s + Number(e.value || 0), 0);
 
-  const productionRate = sumBy((e) => lowerName(e) === "production rate"); // t/h
+  // Production : celle du périmètre filtré ; si le tag/filtre exclut les
+  // balances (ex. tag "water"), on garde la production DE LA LIGNE pour que
+  // le SEC reste calculable : énergie du périmètre ÷ production de la ligne.
+  const scopedProduction = sumBy((e) => lowerName(e) === "production rate"); // t/h
+  const productionRate = scopedProduction > 0 ? scopedProduction : Number(fallbackProductionRate || 0);
   const totalKw        = sumBy((e) => e.unit === "kW");                    // kW
   const steamFlow      = sumBy((e) => lowerName(e) === "steam flow");      // t/h
   const fuelFlow       = sumBy((e) => lowerName(e) === "fuel flow");       // L/h
@@ -601,8 +605,18 @@ export default function Dashboard({
   };
   const physicalEquipments = allEquipments.filter((eq) => !isZoneAggregate(eq));
 
-  const lineEquipments = physicalEquipments.filter((eq) => eq.line === selectedLineLabel);
-  const displayEquipments = lineEquipments.length > 0 ? lineEquipments : physicalEquipments.slice(0, 8);
+  // FILTRAGE : les cartes suivent le périmètre courant (zone / équipement /
+  // tag / énergie). `energies` est déjà la liste FILTRÉE par App → on ne garde
+  // que les équipements qui y figurent. Sans filtre actif : les 12 cartes.
+  const scopedEquipmentNames = new Set(
+    energies.map((e) => e.equipment).filter(Boolean)
+  );
+  const scopedEquipments = physicalEquipments.filter((eq) =>
+    scopedEquipmentNames.has(eq.name)
+  );
+
+  const lineEquipments = scopedEquipments.filter((eq) => eq.line === selectedLineLabel);
+  const displayEquipments = lineEquipments.length > 0 ? lineEquipments : scopedEquipments.slice(0, 8);
 
   const getStatus = (kw) =>
     kw == null
@@ -850,6 +864,11 @@ export default function Dashboard({
         <SECCalculator
           selectedLineLabel={selectedLineLabel}
           energies={energies}
+          fallbackProductionRate={Object.entries(backendSummary || {})
+            .filter(([ln]) => ln === selectedLineLabel)
+            .flatMap(([, d]) => d?.energies || [])
+            .filter((e) => String(e.energy_name || "").toLowerCase() === "production rate")
+            .reduce((s, e) => s + Number(e.value || 0), 0)}
         />
       </section>
 

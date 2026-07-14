@@ -56,7 +56,27 @@ function LineChart({ title, data = [], unit = "", colorClass = "", nominal = nul
   );
 }
 
-export default function PowerQuality({ data = {}, powerQualityHistory = [], selectedLineLabel = "Production Line 1" }) {
+export default function PowerQuality({ data = {}, powerQualityHistory = [], selectedLineLabel = "Production Line 1", platformLive = true }) {
+  // Barrière démo : process à l'arrêt → pas de valeurs/courbes historiques,
+  // la page attend proprement les données réelles.
+  if (!platformLive) {
+    return (
+      <div className="overview-page">
+        <div className="section-title-wrap">
+          <h1>Power Quality</h1>
+          <p>Electrical network quality — {selectedLineLabel}</p>
+        </div>
+        <div style={{ textAlign: "center", padding: "3rem", color: "#888",
+          background: "var(--bg-card)", borderRadius: "12px",
+          border: "1px solid var(--border-color)" }}>
+          <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>⏳</div>
+          <h4>Waiting for DataPlatform data…</h4>
+          <p style={{ marginTop: "0.5rem" }}>Start the process to see power quality measurements.</p>
+        </div>
+      </div>
+    );
+  }
+
   // Paires valeur + timestamp alignées (pour l'étiquette au survol des graphes)
   const pick = (field, cond) => {
     const pts = powerQualityHistory.filter((p) => cond(p[field]));

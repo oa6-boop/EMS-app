@@ -633,45 +633,133 @@ def respond(question: str, context: dict) -> str:
     # Slurry Pump ? », « coût de la zone Flotation ? », « CO2 Production Line 1 ».
     all_energies = context.get("allEnergies") or energies
 
+    def _sum_named(rows, *needles):
+        return sum(safe_float(e.get("value")) for e in rows
+                   if any(n in str(e.get("name") or e.get("energy_name") or "").lower() for n in needles))
+
+    def _avg_raw(rows, key):
+        vals = [safe_float((e.get("rawData") or {}).get(key) or e.get(key))
+                for e in rows if ((e.get("rawData") or {}).get(key) or e.get(key)) is not None]
+        return sum(vals) / len(vals) if vals else None
+
     def _scope_answer(field):
-        """Cherche dans la question une valeur du champ (equipment/area/
-        production_line/plant) présente dans les données, et renvoie un bilan."""
-        seen, best = set(), None
+        """Trouve dans la question un élément (équipement/zone/ligne/usine),
+        même en NOM PARTIEL (« slurry » suffit), puis répond à la MÉTRIQUE
+        précise demandée : état, tension, PF, eau, vapeur, fuel, production,
+        coût, CO₂… — sinon bilan complet."""
+        candidates, seen = [], set()
         for e in all_energies:
             raw = e.get("rawData") or e
-            val = raw.get(field) or e.get(field)
-            if not val or str(val).lower() in seen:
+            val = str(raw.get(field) or e.get(field) or "")
+            if not val or val.lower() in seen:
                 continue
-            seen.add(str(val).lower())
-            if str(val).lower() in q:
-                best = str(val)
-        if not best:
+            seen.add(val.lower())
+            tokens = [t for t in val.lower().replace("-", " ").split() if len(t) >= 3]
+            score = sum(1 for t in tokens if t in q)
+            if val.lower() in q:
+                score += 10                      # nom complet = priorité absolue
+            if score > 0:
+                candidates.append((score, len(val), val))
+        if not candidates:
             return None
+        best = sorted(candidates, key=lambda c: (-c[0], -c[1]))[0][2]
+
         rows = [e for e in all_energies
                 if str((e.get("rawData") or e).get(field) or e.get(field) or "").lower() == best.lower()]
-        kw_s = sum(safe_float(e.get("value")) for e in rows if e.get("unit") == "kW")
-        kwh_s = sum(safe_float(e.get("value")) for e in rows if e.get("unit") == "kWh")
+        kw_s   = sum(safe_float(e.get("value")) for e in rows if e.get("unit") == "kW")
+        kwh_s  = sum(safe_float(e.get("value")) for e in rows if e.get("unit") == "kWh")
         cost_s = sum(safe_float(e.get("cost")) for e in rows)
-        co2_s = sum(safe_float(e.get("co2_kg")) for e in rows)
-        label = {"equipment": "Équipement", "area": "Zone",
-                 "production_line": "Ligne", "plant": "Usine"}.get(field, field)
+        co2_s  = sum(safe_float(e.get("co2_kg")) for e in rows)
+        water  = _sum_named(rows, "water")
+        steam  = _sum_named(rows, "steam")
+        fuel   = _sum_named(rows, "fuel")
+        prod   = _sum_named(rows, "production")
+        v_avg  = _avg_raw(rows, "voltage")
+        pf_avg = _avg_raw(rows, "power_factor")
+        # équipements EN MARCHE dans ce périmètre
+        eq_kw = {}
+        for e in rows:
+            nm = str((e.get("rawData") or e).get("equipment") or e.get("equipment") or "")
+            if nm and e.get("unit") == "kW":
+                eq_kw[nm] = eq_kw.get(nm, 0) + safe_float(e.get("value"))
+        running = [n for n, v in eq_kw.items() if v > 0.5]
+        label = {"equipment": "Équipement" if fr else "Equipment",
+                 "area": "Zone", "production_line": "Ligne" if fr else "Line",
+                 "plant": "Usine" if fr else "Plant"}.get(field, field)
+        head = f"📊 **{label} : {best}**\n\n" if fr else f"📊 **{label}: {best}**\n\n"
+
+        # ── Métrique PRÉCISE demandée ────────────────────────────────────────
+        if has(q, "status", "etat", "marche", "running", "arrete", "arret", "fonctionne",
+               "passe", "happening", "working", "on?", "tourne"):
+            if field == "equipment":
+                st = ("🟢 EN MARCHE" if fr else "🟢 RUNNING") if kw_s > 0.5 else \
+                     (("🟡 ACTIF (procédé)" if fr else "🟡 ACTIVE (process)") if (water + steam + fuel + prod) > 0
+                      else ("🔴 À L'ARRÊT" if fr else "🔴 OFF"))
+                return head + (f"État : **{st}** — {kw_s:.1f} kW" if fr else f"Status: **{st}** — {kw_s:.1f} kW")
+            lst = ", ".join(running) if running else ("aucun" if fr else "none")
+            return head + ((f"⚙️ **{len(running)}/{len(eq_kw)} équipements en marche** ({lst})\n"
+                            f"- ⚡ Puissance totale : **{kw_s:.1f} kW**\n- 💰 Coût : **{cost_s:.2f} MAD**") if fr else
+                           (f"⚙️ **{len(running)}/{len(eq_kw)} equipment running** ({lst})\n"
+                            f"- ⚡ Total power: **{kw_s:.1f} kW**\n- 💰 Cost: **{cost_s:.2f} MAD**"))
+        if has(q, "tension", "voltage", "volt"):
+            return head + (f"🔌 Tension moyenne : **{v_avg:.1f} V**" if fr and v_avg is not None else
+                           f"🔌 Average voltage: **{v_avg:.1f} V**" if v_avg is not None else
+                           ("Pas de mesure de tension ici." if fr else "No voltage measurement here."))
+        if has(q, "facteur", "power factor", "cos"):
+            return head + (f"↗ Facteur de puissance : **{pf_avg:.3f}**" if fr and pf_avg is not None else
+                           f"↗ Power factor: **{pf_avg:.3f}**" if pf_avg is not None else
+                           ("Pas de mesure de PF ici." if fr else "No PF measurement here."))
+        if has(q, "eau", "water"):
+            return head + (f"💧 Eau : **{water:.1f}**" if fr else f"💧 Water: **{water:.1f}**")
+        if has(q, "vapeur", "steam"):
+            return head + (f"♨️ Vapeur : **{steam:.1f}**" if fr else f"♨️ Steam: **{steam:.1f}**")
+        if has(q, "fuel", "carburant", "diesel"):
+            return head + (f"⛽ Fuel : **{fuel:.1f}**" if fr else f"⛽ Fuel: **{fuel:.1f}**")
+        if has(q, "production", "phosphate", "tonnage"):
+            return head + (f"⛏️ Production : **{prod:.1f}**" if fr else f"⛏️ Production: **{prod:.1f}**")
+        if has(q, "co2", "carbone", "emission"):
+            return head + (f"🌱 CO₂ : **{co2_s:.2f} kg**" if fr else f"🌱 CO₂: **{co2_s:.2f} kg**")
+        if has(q, "cout", "cost", "prix", "mad", "facture"):
+            return head + (f"💰 Coût : **{cost_s:.2f} MAD** ({kwh_s:.1f} kWh)" if fr
+                           else f"💰 Cost: **{cost_s:.2f} MAD** ({kwh_s:.1f} kWh)")
+
+        # ── Bilan COMPLET par défaut ─────────────────────────────────────────
+        extra = ""
+        if water > 0: extra += f"\n- 💧 {'Eau' if fr else 'Water'} : **{water:.1f}**"
+        if steam > 0: extra += f"\n- ♨️ {'Vapeur' if fr else 'Steam'} : **{steam:.1f}**"
+        if fuel > 0:  extra += f"\n- ⛽ Fuel : **{fuel:.1f}**"
+        if prod > 0:  extra += f"\n- ⛏️ Production : **{prod:.1f}**"
+        if v_avg is not None:  extra += f"\n- 🔌 {'Tension' if fr else 'Voltage'} : **{v_avg:.1f} V**"
+        if pf_avg is not None: extra += f"\n- ↗ PF : **{pf_avg:.3f}**"
+        if field != "equipment" and eq_kw:
+            extra += (f"\n- ⚙️ {len(running)}/{len(eq_kw)} " +
+                      ("équipements en marche" if fr else "equipment running"))
         if fr:
-            return (
-                f"📊 **{label} : {best}**\n\n"
-                f"- ⚡ Puissance active : **{kw_s:.1f} kW**\n"
-                f"- 🔋 Énergie : **{kwh_s:.1f} kWh**\n"
-                f"- 💰 Coût : **{cost_s:.2f} MAD**\n"
-                f"- 🌱 CO₂ : **{co2_s:.2f} kg**\n"
-                f"- 📡 {len(rows)} mesure(s) associée(s)"
-            )
-        return (
-            f"📊 **{label}: {best}**\n\n"
-            f"- ⚡ Active power: **{kw_s:.1f} kW**\n"
-            f"- 🔋 Energy: **{kwh_s:.1f} kWh**\n"
-            f"- 💰 Cost: **{cost_s:.2f} MAD**\n"
-            f"- 🌱 CO₂: **{co2_s:.2f} kg**\n"
-            f"- 📡 {len(rows)} reading(s)"
-        )
+            return (head +
+                    f"- ⚡ Puissance active : **{kw_s:.1f} kW**\n"
+                    f"- 🔋 Énergie : **{kwh_s:.1f} kWh**\n"
+                    f"- 💰 Coût : **{cost_s:.2f} MAD**\n"
+                    f"- 🌱 CO₂ : **{co2_s:.2f} kg**{extra}\n"
+                    f"- 📡 {len(rows)} mesure(s)")
+        return (head +
+                f"- ⚡ Active power: **{kw_s:.1f} kW**\n"
+                f"- 🔋 Energy: **{kwh_s:.1f} kWh**\n"
+                f"- 💰 Cost: **{cost_s:.2f} MAD**\n"
+                f"- 🌱 CO₂: **{co2_s:.2f} kg**{extra}\n"
+                f"- 📡 {len(rows)} reading(s)")
+
+    # « Quel équipement consomme le plus ? » / top consumer
+    if has(q, "plus consomme", "consomme le plus", "top", "highest", "most consum", "gourmand", "classement"):
+        eq_kw = {}
+        for e in all_energies:
+            nm = str((e.get("rawData") or e).get("equipment") or e.get("equipment") or "")
+            if nm and e.get("unit") == "kW":
+                eq_kw[nm] = eq_kw.get(nm, 0) + safe_float(e.get("value"))
+        if eq_kw:
+            rank = sorted(eq_kw.items(), key=lambda x: -x[1])[:5]
+            lines_txt = "\n".join(f"{i+1}. **{n}** — {v:.1f} kW" for i, (n, v) in enumerate(rank))
+            return (f"🏆 **Top consommateurs (kW) :**\n\n{lines_txt}" if fr
+                    else f"🏆 **Top consumers (kW):**\n\n{lines_txt}")
 
     # On teste du plus précis (équipement) au plus large (usine)
     for _field in ("equipment", "area", "production_line", "plant"):

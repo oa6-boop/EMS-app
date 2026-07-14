@@ -44,6 +44,7 @@ export default function Header({
   onWeatherClick,
 
   structure = [],            // arbre Plant → Line → Zone → Equipment
+  tagIndex = [],             // tags (dont ID équipement TimescaleDB) → recherche
   selection = { plant: "", line: "", zone: "", equipment: "", tag: "" },
   onSelectionChange,
 
@@ -129,8 +130,14 @@ export default function Header({
         });
       });
     });
+    // Tags (dont l'ID TimescaleDB de chaque équipement, ex. #l1_extr_bw) :
+    // sélectionner un tag applique le filtre par tag sur toutes les pages.
+    tagIndex.forEach((ti) => {
+      items.push({ type: "Tag", label: `#${ti.tag}`, path: ti.equipment || ti.line || "",
+        sel: { plant: ti.plant || "", line: ti.line || "", zone: "", equipment: "", tag: ti.tag } });
+    });
     return items;
-  }, [structure]);
+  }, [structure, tagIndex]);
 
   const searchResults = useMemo(() => {
     const q = locSearch.trim().toLowerCase();

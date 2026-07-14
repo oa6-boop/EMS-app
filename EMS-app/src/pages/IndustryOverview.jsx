@@ -106,18 +106,27 @@ export default function IndustryOverview({
   availableTags = [],
   selectedTag = "",
   onTagSelect,
+  platformLive = true,
 }) {
-  const [kpis, setKpis] = useState(() => getCached("io_kpis", null));
+  const [rawKpis, setKpis] = useState(() => getCached("io_kpis", null));
   const [alarms, setAlarms] = useState(() => getCached("io_alarms", []));
-  const [linesSummary, setLinesSummary] = useState(() => getCached("io_summary", {}));
+  const [rawLinesSummary, setLinesSummary] = useState(() => getCached("io_summary", {}));
   // Cache navigation : la page se rouvre avec ses dernieres donnees
-  useEffect(() => { setCached("io_kpis", kpis); setCached("io_alarms", alarms); setCached("io_summary", linesSummary); }, [kpis, alarms, linesSummary]);
-  const [structure, setStructure] = useState({
+  useEffect(() => { setCached("io_kpis", rawKpis); setCached("io_alarms", alarms); setCached("io_summary", rawLinesSummary); }, [rawKpis, alarms, rawLinesSummary]);
+  const [rawStructure, setStructure] = useState({
     lines: [],
     zones: [],
     plants: [],
     equipment: [],
   });
+
+  // Barrière démo : tant que le process n'envoie pas de données réelles,
+  // on n'affiche AUCUN reliquat historique (résumés, structure, KPI).
+  const kpis = platformLive ? rawKpis : null;
+  const linesSummary = platformLive ? rawLinesSummary : {};
+  const structure = platformLive
+    ? rawStructure
+    : { lines: [], zones: [], plants: [], equipment: [] };
   const [error, setError] = useState("");
   const [period, setPeriod] = useState("day");
   const [filterSev, setFilterSev] = useState("all");

@@ -157,7 +157,7 @@ function ForecastChart({ historical = [], predictions = [], unit = "", color = "
   );
 }
 
-export default function Forecasting({ energies = [], selectedLineLabel = "Production Line 1" }) {
+export default function Forecasting({ energies = [], selectedLineLabel = "Production Line 1", platformLive = true }) {
   const [ap, setAp] = useState(null); // active_power RÉEL : historique + prédictions régression
 
   // Prévision RÉELLE : le backend applique une régression linéaire sur
@@ -276,6 +276,26 @@ export default function Forecasting({ energies = [], selectedLineLabel = "Produc
     }
     return trend != null ? energy.value * trend : null;
   };
+
+  // Barrière démo : process à l'arrêt → pas de projections sur des données
+  // périmées, la page attend proprement les données réelles.
+  if (!platformLive) {
+    return (
+      <div className="overview-page">
+        <div className="section-title-wrap">
+          <h1>Forecasting</h1>
+          <p>Predicted energy demand — {selectedLineLabel}</p>
+        </div>
+        <div style={{ textAlign: "center", padding: "3rem", color: "#888",
+          background: "var(--bg-card)", borderRadius: "12px",
+          border: "1px solid var(--border-color)" }}>
+          <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>⏳</div>
+          <h4>Waiting for DataPlatform data…</h4>
+          <p style={{ marginTop: "0.5rem" }}>Start the process to see energy forecasts.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="overview-page">
